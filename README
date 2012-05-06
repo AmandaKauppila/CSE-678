@@ -1,0 +1,60 @@
+              Amanda Kauppila & Gregory Shayko
+                                   Spring 2012
+                                       CSE 678
+                 Course Project
+----------------------------------------------
+
+Files:
+
+  Makefile
+    The Makefile used for installing the 
+    application
+  ftps.cpp
+    The code for the server side ftps program
+  ftpc.cpp 
+    The code for the client side ftpc program
+  tcpds.cpp 
+    The code for the server side tcpd program
+  tcpdc.cpp 
+    The code for the client side tcpd program
+  TCP.h
+    Header containing the TCP protocal 
+    functions
+  FTP.h
+    Header containing the FTP packet structure
+  utils.h
+    Helper functions used globally throughout
+    the application.
+  troll.h
+    Header containing troll specific packets
+  troll
+    The troll executable
+  imgs
+    Directory containing sample images to send
+
+Requirements:
+
+  g++ compiler on the stdsun enviroment of 
+  cse.ohio-state.edu
+
+Installation Instruction:
+
+  1.Copy the files to a directory of choice
+  2.Using the unix command prompt change to 
+    the newly copied directory.
+  3.Run the command
+      % make
+  
+Usage Instructions:
+
+  1.Navigate to the program directory
+    and start the troll/tcpds/tcpdc proccesses using
+    on the correspondng machines indicated by c for
+    client and s for server
+      % tcpds
+      % ftps <local-port>
+      % tcpdc
+      % troll 8585
+  2.Send a file to the server using
+      % ftpc <remote-IP> <remote-port> <local-file-to-transfer>
+  3.The file is saved as ftp_<name>
