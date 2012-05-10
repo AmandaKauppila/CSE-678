@@ -5,10 +5,11 @@ FTPC = ftpc.cpp
 FTPS = ftps.cpp
 TCPDC = tcpdc.cpp
 TCPDS = tcpds.cpp
+TIMER = timer.cpp
 
 LIB = -lsocket -lxnet
 
-ALL = ftpc ftps tcpdc tcpds
+ALL = ftpc ftps tcpdc tcpds timer
 # setup for stem
 all: $(ALL)
 
@@ -27,6 +28,9 @@ tcpdc:	$(TCPDC)
 
 tcpds:	$(TCPDS)
 	$(CC) -o $@ $(TCPDS) $(LIB)
+
+timer:	$(TIMER)
+	$(CC) -o $@ $(TIMER) $(LIB)
 
 clean:
 	rm $(ALL)

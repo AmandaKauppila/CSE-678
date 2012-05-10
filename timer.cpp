@@ -1,13 +1,19 @@
+/**
+  Timer Proccess
+  The timer process keeps track of of packet timeouts. if the
+  timeout value within the packet is reached before a corresponding
+  ACK is received, the TCPD is notified to resend the packet.
+ 
+  @author Gregory Shayko/Amanda Kauppila
+  
+*/
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netdb.h> //gethostbyname
 
-#include <string.h>
-#include <strings.h>
-#include <unistd.h>
 #include <list>
 
 #include "TCP.h"
@@ -15,19 +21,35 @@
 
 using namespace std;
 
-int nodeAdd(int time, int seq, int port);
-int nodeAcked(int seq);
+int removeNode(int seq);
 
 typedef struct{
-    int dtime; //in ms
+    int dtime; //in us
     int sequence;
-    int timeout; //in ms
+    int timeout; //in us
     struct timeval start;
 } Node;
 
 list<Node> dlist;
 list<Node>::iterator it; //used for looping dlist
 
+
+/*
+ * Implementation
+ *  1. Sets up local UDP for incoming packets
+ *  2. Check if RECV has packets
+ *    a. If the packet is a new timer
+ *      i. Add the packet timer to the list
+ *    b. If the packet is an ACK
+ *      i. Remove the timer from the list
+ *  3. Check if any Timeouts occured
+ *    a. Alert the TCPD and remove the timeout
+ *
+ *  Notes:
+ *  - The timer process only works if the timeout is the same for every
+ *    node. This can be done by doing a selection insert with the current
+ *    code from the rear forward.
+ */
 int main(){
     
     //Change to predefined struct format between TCPD and Timer
@@ -38,22 +60,27 @@ int main(){
     
     // select vars I/O multiplexing
     fd_set rfds;
-    struct timeval tv, time_start;
+    struct timeval tv, time_curr;
     int retval;
     
     // socket vars
     int sock;// only need one socket for both sending and receiving
-    struct sockaddr_in sock_timer;
-    
+    struct sockaddr_in sock_timer,
+                       sock_tcpd;
     /* initialize send socket connection for UDP (DGRAM for UDP,
      * STREAM for TCP) in unix domain */
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if(sock < 0)err("error opening datagram socket");
     debugf("Socket Connection Complete, sock=%d", sock);
-    
+
+    // setup socket address for local timer
     sock_timer.sin_family = AF_INET;
     sock_timer.sin_port = ntohs(TIMER_PORT);
     sock_timer.sin_addr.s_addr = INADDR_ANY;
+    // setup socket address to tcpd
+    sock_tcpd.sin_family = AF_INET;
+    sock_tcpd.sin_port = htons(TCPD_CLIENT_PORT);
+    sock_tcpd.sin_addr.s_addr = INADDR_ANY;
     
     if(bind(sock, (struct sockaddr *)&sock_timer, sizeof(sock_timer)) < 0)
 	err("Error binding timer port %d", sock_timer.sin_port);
@@ -61,7 +88,7 @@ int main(){
     
     //set the timerval for select
     tv.tv_sec = 0;
-    tv.tv_usec = 100000; // .01s
+    tv.tv_usec = 100000; // .1s
     
     while(1){
 	// ready select
@@ -72,7 +99,7 @@ int main(){
 	retval = select(FD_SETSIZE, &rfds, NULL, NULL, &tv);
 
 	//get the time
-	gettimeofday(&time_start, NULL);
+	gettimeofday(&time_curr, NULL);
 	    
 	// if recv ready
 	if(retval > 0){
@@ -87,8 +114,8 @@ int main(){
 		memset(&tmp, 0, sizeof(Node));
 		tmp.sequence = packet.sequence;
 		tmp.timeout = packet.timeout;
-		tmp.start.tv_sec = time_start.tv_sec;
-		tmp.start.tv_usec = time_start.tv_usec;
+		tmp.start.tv_sec = time_curr.tv_sec;
+		tmp.start.tv_usec = time_curr.tv_usec;
 		
 		//Calculate the time
 		int backTimeout = dlist.back().timeout;
@@ -98,79 +125,49 @@ int main(){
 		tmp.dtime = time_s + tmp.timeout;
 		
 		dlist.push_back(tmp);
+		
 	    }else if(packet.ACK == 1){
 		// remove from list
-		nodeAcked(packet.sequence);
-	    }
-	    
-	    for(it=dlist.begin();it !=dlist.end();it++){
-		printf("size=%d\n", (int) dlist.size());
-		printf("seq=%d,time=%d\n", ((Node)*it).sequence, ((Node)*it).dtime);
+		removeNode(packet.sequence);
 	    }
 	
 	}
+
+	//get the time
+	gettimeofday(&time_curr, NULL);
 	
 	// check list for expired timers
 	// send to orig port that seq expired.
-	
-	
-	
-	/* check the current list and decide which node is expired */
-	/* don't iterate over the list- the first element will always
-	 * expire first */
-	/*
-	  for(list<Node>::iterator it; it = dlist.begin(); it != dlist.end(){
-	  //figure out how to calculate the time
-	  time_t = clock();
-	  int diff = time_t - (*it).time;
-	  if(diff <= 0){
-	  // timer has expired, send notice to tcpd_client 
-	  // format tcp header and packet for buf
-	  if(sendto(sockSend, buf, 1024) < 0){
-	  printf("error writing to socket\n");
-	  exit(1);
-	  }
-	  }
-	  }
-	*/
-	
-	
-	
+	if(dlist.size() > 0){
+	    it=dlist.begin();
+	    int diff = (((Node)*it).start.tv_sec * 1000000 + ((Node)*it).start.tv_usec) +((Node)*it).timeout - (time_curr.tv_sec * 1000000 + time_curr.tv_usec);;
+	    while(diff <= 0){
+		//ready and send the tcpd packet
+		debugf("Timer Expired, seq=%d", ((Node)*it).sequence);
+		tcpd_packet packet_tcpd;
+		memset(&packet_tcpd, 0, sizeof(tcpd_packet));
+		packet_tcpd.type = TIMEOUT;
+		packet_tcpd.sequence = ((Node)*it).sequence;
+		sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
+		//remove the timed out timer
+		dlist.pop_front();
+		if(dlist.size()==0)break;
+		it=dlist.begin();
+		diff = (((Node)*it).start.tv_sec * 1000000 + ((Node)*it).start.tv_usec) +((Node)*it).timeout - (time_curr.tv_sec * 1000000 + time_curr.tv_usec);
+	    }
+	}
     }
 }
 
+//helper function for the removeNode function.
 int sequenceToRemove;
 bool isSeqToRemove(const Node& value) { 
     return (value.sequence == sequenceToRemove); 
 }
-    
-/* calculate time left before adding to list */
-/* need to figure out what is needed to store */
-/*int nodeAdd(int time, int seq, int port){
-  Node node;
-  node.time = time;
-  node.port = port;
-  node.sec_left;
-  // node.seq = seq 
-  int size = dlist.size();
-  // get time of last node 
-  int timeLastNode = dlist
-  dlist.push_back(node);
-  int size2 = dlist.size();
-  if (size == size2){
-  //  could not add node to list 
-  }
-  }
-*/
 
-int nodeAcked(int seq){
+//Removes a node from the dlist given
+//a sequence number
+int removeNode(int seq){
     sequenceToRemove = seq;
     dlist.remove_if(isSeqToRemove);
-    // remove from list
-    //for(it=dlist.begin();it !=dlist.end();it++){
-    //	if(((Node)*it).sequence == packet.sequence){
-    //    sequenceToRemove = packet
-    //}
-    //printf("REMOVED ACK=%d\n", packet.sequence);
-    //}
 }

@@ -28,8 +28,12 @@
 // Defines --------------------------------------------
 #define TCPD_CLIENT_PORT 9050
 #define TCPD_SERVER_PORT 9051
+#define TIMER_PORT 8569
 #define TROLL_PORT 8585
 #define MAX_DATA_SIZE 1000
+#define DEFAULT_TIMEOUT 10000000
+
+#define TIMEOUT 5
 
 //Specifies the address and port of the server. Global
 //since accept and connect are not functioning yet.
@@ -40,9 +44,18 @@ struct sockaddr_in name_server;
  * between the TCP functions and TCP Daemon.
  */
 typedef struct tcpd_packet {
+    unsigned type : 3;
     struct sockaddr_in sock_dest; //General socket descriptor
-    int data_len; //Length of data actually used
+    unsigned int data_len; //Length of data actually used
     char data[MAX_DATA_SIZE]; //Message Data
+    unsigned int sequence;
+};
+
+typedef struct timer_packet {
+    unsigned ACK : 1;
+    unsigned SEQ : 1;
+    unsigned int sequence;
+    unsigned int timeout;
 };
 /*
  * TCP Packet is what is sent over the network. It mimics
