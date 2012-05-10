@@ -17,6 +17,9 @@ Files:
     The code for the server side tcpd program
   tcpdc.cpp 
     The code for the client side tcpd program
+  timer.cpp
+    The code for the timer to manage TCP
+    timeouts
   TCP.h
     Header containing the TCP protocal 
     functions
@@ -48,13 +51,25 @@ Installation Instruction:
 Usage Instructions:
 
   1.Navigate to the program directory
-    and start the troll/tcpds/tcpdc proccesses using
-    on the correspondng machines indicated by c for
-    client and s for server
+    and start the troll/tcpds/tcpdc proccesses 
+    using on the correspondng machines 
+    indicated by c for client and s for server
       % tcpds
-      % ftps <local-port>
       % tcpdc
+      % timer
       % troll 8585
   2.Send a file to the server using
+      % ftps <local-port>
       % ftpc <remote-IP> <remote-port> <local-file-to-transfer>
   3.The file is saved as ftp_<name>
+
+RELEASE NOTES:
+-----------------------------------------------
+
+V1.0
+
+  - The Resending of packets is not yet 
+    implemented. Therefore trolling may cause 
+    the transfer to fail/create problems.
+  - The TCPD only ACKs the timer 10% of all 
+    packets for testing purposes
