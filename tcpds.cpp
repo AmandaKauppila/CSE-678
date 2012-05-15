@@ -80,7 +80,33 @@ int main(int argc, char* argv[]){
 
     int curr_port = 0;
     
+    // Main Application loop
+    // This loop always runs so tcpds never has be restarted
     while(1){
+    	
+    	/*
+	 * BIND IMPLEMENTATION as of 5/15/2012 Gregor
+	 *
+	 * 1. Wait for BIND call. Should be a tcpd_packet with type BIND
+	 *    and the port the tcpds should bind to
+	 * 2. Enter TCP LOOP (loops until connection closed via CLOSE)
+	 *    a. Wait for tcp_packet. First packet is the ISN (initial sequence #)
+	 *    b. Check CRC checksum
+	 *    c. If tcp_packet.DATA
+	 *        i. Seqeunce check
+	 *       ii. Send ACK
+	 *      iii. Return to STEP(2a)
+	 &    d. If tcp_packet.CLOSE
+	 *        i. close logic
+	 *       ii. exit loop, goto STEP(3)
+	 *    e. Send data to client application
+	 * 3. Unbind port to socket
+	 * 4. Cleanup used resources
+	 * 5. Return to STEP(1) waiting for another TCP connection
+	 */
+	
+	//Main Read Loop
+	//Waits for data from the binded port
 	
 	int total_read = 0;
 	//Wait for recv to say they want a packet
@@ -117,6 +143,7 @@ int main(int argc, char* argv[]){
 	
 	if(checksum != checksum_in){
 	    printf("CHECKSUM ERROR, Seq=%d\n", packet_tcp.sequence);
+	    //drop the packet
 	}
 
 	//CHECK THE SEQUENCE NUMBER AGAINST WINDOW BUFFER
