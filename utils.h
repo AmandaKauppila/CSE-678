@@ -25,6 +25,7 @@ void err(const char *msg, ...){
     vfprintf( stderr, msg, args );
     va_end( args );
     perror("\nERROR:");
+    fflush(stderr);
     exit(1);
 }
 
@@ -39,11 +40,12 @@ void err(const char *msg, ...){
 void debugf(const char *format, ...){
     if(!DEBUG_ENABLED)return;
     va_list args;
-    fprintf( stderr, "[Debug] " );
+    fprintf( stdout, "[Debug] " );
     va_start( args, format );
-    vfprintf( stderr, format, args );
+    vfprintf( stdout, format, args );
     va_end( args );
-    fprintf( stderr, "\n" );
+    fprintf( stdout, "\n" );
+    fflush(stdout);
 }
 
 

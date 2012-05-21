@@ -26,12 +26,12 @@
 #define TCP_H_GUARD
 
 // Defines --------------------------------------------
-#define TCPD_CLIENT_PORT 9050
-#define TCPD_SERVER_PORT 9051
-#define TIMER_PORT 8569
-#define TROLL_PORT 8585
+#define TCPD_CLIENT_PORT 9090
+#define TCPD_SERVER_PORT 9091
+#define TIMER_PORT 8592
+#define TROLL_PORT 8593
 #define MAX_DATA_SIZE 1000
-#define DEFAULT_TIMEOUT 10000000
+#define DEFAULT_TIMEOUT 3000
 
 #define TIMEOUT 5
 
