@@ -168,4 +168,52 @@ size_t RECV(int sockfd, void *buf, size_t len, int flags){
     return packet.data_len;
 }
 
+int SOCKET(	int family, int type, int protocol){
+	/*
+	* Implementation
+	* 1.  Attempts to create socket with UDP function call
+	* 2.  If socket is not created, retries creating socket until it is created
+	* 3.  To prevent infinite loop, set a timeout, but set it high- try 1000 times-- server side is not connected to our delta timer
+	* 4.  return socket ID
+	*/
+	printf("in socket!\n");
+	int attempts = 0;
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+	while ((sock < 0) && (attempts < 1000)){
+		attempts++;
+		sleep(1);
+		sock = SOCKET(AF_INET, SOCK_DGRAM, 0);
+		printf("in loop in socket.  attempts = %d\n", attempts);
+	}
+	
+	return sock;
+}
+
+int BIND (int sockfd, struct sockaddr *my_addr, socklen_t addrlen){
+	/*
+	* Implementation
+	* 1. assigns port to the unnamed socket
+	* 2.  returns 0 on success
+	*/
+	printf("in bind!\n");
+	int attempts = 0;
+	int addr = bind(sockfd, my_addr, addrlen);
+	while((addr < 0) && (attempts < 1000)){
+		attempts++;
+		sleep(1);
+		addr = bind(sockfd, my_addr, addrlen);
+		printf("in loop in bind.  attempts = %d\n", attempts);
+	}
+	
+	return addr;
+}
+
+int ACCEPT(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen){
+	// not implementing for this project
+}
+
+int CONNECT	(int sockfd, const struct sockaddr *serv_addr, socklen_t addrlen){
+	// not implementing for this project
+}
 #endif
+
