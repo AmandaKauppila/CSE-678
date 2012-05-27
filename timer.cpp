@@ -72,7 +72,7 @@ int main(){
     // socket vars
     int sock;// only need one socket for both sending and receiving
     struct sockaddr_in sock_timer,
-                       sock_destination,
+	               sock_destination,
 	               sock_from;
     socklen_t fromlen;
     /* initialize send socket connection for UDP (DGRAM for UDP,
@@ -85,7 +85,10 @@ int main(){
     sock_timer.sin_family = AF_INET;
     sock_timer.sin_port = ntohs(TIMER_PORT);
     sock_timer.sin_addr.s_addr = INADDR_ANY;
-
+    
+    sock_destination.sin_family = AF_INET;
+    sock_destination.sin_addr.s_addr = INADDR_ANY;
+    
     fromlen = sizeof(sock_from);
     
     if(bind(sock, (struct sockaddr *)&sock_timer, sizeof(sock_timer)) < 0)
@@ -140,6 +143,7 @@ int main(){
 	    time_diff = it_node.delta - time_delta;
 	    //debugf("Checking time_diff=%d", time_diff);
 	    while(time_diff <= 0){
+		usleep(1 * 1000);//Prevents buffer overflow.
 		//ready and send the tcpd packet
 		debugf("TIMEOUT seq=%d port=%d", it_node.sequence, it_node.port);
 		tcpd_packet packet_tcpd;
@@ -147,10 +151,9 @@ int main(){
 		packet_tcpd.type = TYPE_TIMEOUT;
 		packet_tcpd.sequence = it_node.sequence;
 		// setup socket address to destination
-		sock_destination.sin_family = AF_INET;
 		sock_destination.sin_port = htons(it_node.port);
-		sock_destination.sin_addr.s_addr = INADDR_ANY;
-		sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_destination, sizeof(sock_destination));
+		if(sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_destination, sizeof(sock_destination)) < 0)
+		    err("Error sending timeout for seq=%d", it_node.sequence);
 		time_delta = time_delta - it_node.delta;
 		dlist.pop_front();//remove the timed out timer
 		

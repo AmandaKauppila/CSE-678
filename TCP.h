@@ -32,7 +32,9 @@
 #define TROLL_PORT 8596
 #define MAX_DATA_SIZE 1000
 #define DEFAULT_TIMEOUT 3000
+#define WINDOW_SIZE 20
 
+//Common TYPE's used throughout the TCP protocal
 #define TYPE_TIMEOUT 1
 #define TYPE_SEND 2
 #define TYPE_CLOSE 4
@@ -50,8 +52,9 @@ typedef struct tcpd_packet {
     struct sockaddr_in sock_dest; //General socket descriptor
     unsigned int data_len; //Length of data actually used
     char data[MAX_DATA_SIZE]; //Message Data
-    unsigned int sequence;
-    unsigned ACKED : 1;
+    uint32_t sequence;
+    unsigned sent : 1; //record if sent to receiver
+    unsigned acked : 1; //record if acked from receiver
 };
 
 typedef struct timer_packet {
@@ -124,7 +127,7 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
     packet.type = TYPE_SEND;
     
     //Sleep for 10ms
-    usleep(10 * 1000);
+    usleep(1 * 1000);
 
     //TODO change it so the function waits for a confirmation that the
     //buffer is not full and that it can continue
