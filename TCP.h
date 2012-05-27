@@ -26,14 +26,16 @@
 #define TCP_H_GUARD
 
 // Defines --------------------------------------------
-#define TCPD_CLIENT_PORT 9090
-#define TCPD_SERVER_PORT 9091
-#define TIMER_PORT 8592
-#define TROLL_PORT 8593
+#define TCPD_CLIENT_PORT 9095
+#define TCPD_SERVER_PORT 9096
+#define TIMER_PORT 8595
+#define TROLL_PORT 8596
 #define MAX_DATA_SIZE 1000
 #define DEFAULT_TIMEOUT 3000
 
-#define TIMEOUT 5
+#define TYPE_TIMEOUT 1
+#define TYPE_SEND 2
+#define TYPE_CLOSE 4
 
 //Specifies the address and port of the server. Global
 //since accept and connect are not functioning yet.
@@ -119,9 +121,13 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
     memcpy(&packet.sock_dest, &name_server, sizeof(sockaddr_in));
     memcpy(&packet.data, buf, len);
     packet.data_len = len;
+    packet.type = TYPE_SEND;
     
     //Sleep for 10ms
     usleep(10 * 1000);
+
+    //TODO change it so the function waits for a confirmation that the
+    //buffer is not full and that it can continue
     
     /* Send to the tcpd_c */
     return sendto(sockfd, &packet, sizeof(tcpd_packet), flags, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
