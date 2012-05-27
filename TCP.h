@@ -51,6 +51,7 @@ typedef struct tcpd_packet {
     unsigned int data_len; //Length of data actually used
     char data[MAX_DATA_SIZE]; //Message Data
     unsigned int sequence;
+    unsigned ACKED : 1;
 };
 
 typedef struct timer_packet {
@@ -85,7 +86,6 @@ typedef struct tcp_packet {
     int data_len; //Length of data actually used
     char data[MAX_DATA_SIZE]; //Message Data
 };
-
 
 /**
  * Send a message on a socket via custom TCP protocal
