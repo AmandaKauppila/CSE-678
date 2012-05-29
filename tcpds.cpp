@@ -35,19 +35,31 @@
 #include "troll.h"
 #include "utils.h"
 #include "checksum.h"
+#include "circular.h"
+
+typedef circular_buffer<tcpd_packet> cbuf_tcp;
+cbuf_tcp cbuf(64);
+
+
+void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination);
+
+int sock; //socket descriptor for TCPD
+int sock_ext; //socket used for incoming network connections
+struct sockaddr_in sock_tcpds;/* structure for socket name setup */
+struct sockaddr_in sock_recv;
+struct sockaddr_in sock_tcp;
+struct sockaddr_in sock_troll;
+struct sockaddr_in sock_from;
+socklen_t sock_recv_len;
+socklen_t fromlen;
+struct hostent *recv_host;
 
 int main(int argc, char* argv[]){
     
-    
-    int sock; //socket descriptor for TCPD
-    int sock_ext; //socket used for incoming network connections
-    struct sockaddr_in sock_tcpds;/* structure for socket name setup */
-    struct sockaddr_in sock_recv;
-    socklen_t sock_recv_len = sizeof(struct sockaddr_in);
-    struct hostent *recv_host;
-
     tcpd_packet packet_tcpd;
     tcp_packet packet_tcp;
+
+    cbuf_tcp::iterator it = cbuf.begin();
     
     if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	err("Error openting datagram socket");
@@ -60,36 +72,55 @@ int main(int argc, char* argv[]){
     sock_tcpds.sin_family = AF_INET;
     sock_tcpds.sin_addr.s_addr = INADDR_ANY;
     sock_tcpds.sin_port = htons(TCPD_SERVER_PORT);
-
+    
+    sock_troll.sin_family = AF_INET;
+    sock_tcp.sin_family = AF_INET;
+    
     /* bind TCPD Server to Local Port */
     if(bind(sock, (struct sockaddr *)&sock_tcpds, sizeof(sock_tcpds)) < 0)
 	err("Error binding socket");
 
     debugf("TCPD locally binded to port %d", sock_tcpds.sin_port);
+
     
     /* RECV Setup */
     if ((recv_host = gethostbyname("localhost")) == NULL)
 	err("Unknown recv host 'localhost'\n");
 
-    /*
-      bzero((char *)&sock_recv, sizeof(sockaddr_in));
-      sock_recv.sin_family = AF_INET;
-      bcopy(recv_host->h_addr, (char*)&sock_recv.sin_addr, recv_host->h_length);
-      sock_recv.sin_port = htons(RECV_PORT);
-    */
+    unsigned short curr_port = 0;
+    unsigned int low_seq = 0;
+    bool init_seq = false;
 
-    int curr_port = 0;
+    int total_read = 0;
+    unsigned int counter;
+    
+    //Wait for bind
+    debugf("Waiting for BIND from application");
+	
+    memset(&packet_tcpd, 0, sizeof(tcpd_packet));
+    memset(&packet_tcp, 0, sizeof(tcp_packet));
+	
+    bzero((char *)&sock_recv, sizeof(sockaddr_in));
+    sock_recv_len = sizeof(sock_recv);
+    if(recvfrom(sock, &packet_tcpd, sizeof(packet_tcpd), 0, (struct sockaddr *)&sock_recv, &sock_recv_len) < 0)
+	err("Invalid receive from BIND");
+
+    //Ready for recv
+    sock_recv.sin_port = TCPD_RECV_PORT;
+    curr_port = packet_tcpd.port;
+    
+    /* bind TCPD Server to Local Port */
+    if(bind(sock_ext, (struct sockaddr *)&packet_tcpd.sock_dest, sizeof(sockaddr)) < 0)
+	err("Error binding socket for tcp port=%d",sock_tcp.sin_port);
+    
+    debugf("BIND on port=%d", packet_tcpd.sock_dest.sin_port);
     
     // Main Application loop
     // This loop always runs so tcpds never has be restarted
     while(1){
     	
     	/*
-	 * BIND IMPLEMENTATION as of 5/15/2012 Gregor
-	 *
-	 * 1. Wait for BIND call. Should be a tcpd_packet with type BIND
-	 *    and the port the tcpds should bind to
-	 * 2. Enter TCP LOOP (loops until connection closed via CLOSE)
+	 * 1. TCP LOOP (loops until connection closed via CLOSE)
 	 *    a. Wait for tcp_packet. First packet is the ISN (initial sequence #)
 	 *    b. Check CRC checksum
 	 *    c. If tcp_packet.DATA
@@ -104,37 +135,17 @@ int main(int argc, char* argv[]){
 	 * 4. Cleanup used resources
 	 * 5. Return to STEP(1) waiting for another TCP connection
 	 */
+	debugf("Waiting for TCP Packet");
 	
-	//Main Read Loop
-	//Waits for data from the binded port
-	
-	int total_read = 0;
-	//Wait for recv to say they want a packet
-	debugf("Waiting for RECV from application");
-	
-	memset(&packet_tcpd, 0, sizeof(tcpd_packet));
-	memset(&packet_tcp, 0, sizeof(tcp_packet));
-	
-	bzero((char *)&sock_recv, sizeof(sockaddr_in));
-	if(recvfrom(sock, &packet_tcpd, sizeof(packet_tcpd), 0, (struct sockaddr *)&sock_recv, &sock_recv_len) < 0)
-	    err("Invalid receive from RECV");
-
-	debugf("RECV on Port %d", packet_tcpd.sock_dest.sin_port);
-
-	/* bind TCPD Server to External Port */
-	if(packet_tcpd.sock_dest.sin_port != curr_port){
-	    if(bind(sock_ext, (struct sockaddr *)&packet_tcpd.sock_dest, sizeof(sockaddr_in)) < 0)
-		err("Error binding socket");
-	    curr_port = packet_tcpd.sock_dest.sin_port;
-	}
 	NetMessage msg;
 	memset(&msg, 0, sizeof(NetMessage));
-	total_read = recv(sock_ext, &msg, sizeof(NetMessage), 0);
+	fromlen = sizeof(fromlen);
+	total_read = recvfrom(sock_ext, &msg, sizeof(NetMessage), 0,(sockaddr *)&sock_from, &fromlen); 
 
 	memset(&packet_tcp, 0, sizeof(tcp_packet));
 	memcpy(&packet_tcp, &msg.msg_contents, sizeof(tcp_packet));
 
-	//Check the CHECKSUM
+	//Check the CHECKSUM, drop if wrong.
 	int checksum_in = packet_tcp.checksum;
 	packet_tcp.checksum = 0;
 	int checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
@@ -142,24 +153,111 @@ int main(int argc, char* argv[]){
 	debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
 	
 	if(checksum != checksum_in){
-	    printf("CHECKSUM ERROR, Seq=%d\n", packet_tcp.sequence);
-	    //drop the packet
+	    printf("CHECKSUM ERROR, seq=%d", packet_tcp.sequence);
+	    continue;
 	}
 
-	//CHECK THE SEQUENCE NUMBER AGAINST WINDOW BUFFER
-	debugf("Sequence = %d", packet_tcp.sequence);
+	//If the buffer is full, drop it.
+	if(cbuf.size() == cbuf.capacity()){
+	    printf("BUFFER FULL, seq=%d", packet_tcp.sequence);
+	    continue;
+	}
 
-	//Ready the TCPD packet to RECV
-	memset(&packet_tcpd, 0, sizeof(tcpd_packet));
-	memcpy(&packet_tcpd.data, &packet_tcp.data, sizeof(packet_tcp.data));
-	packet_tcpd.data_len = packet_tcp.data_len;
+	// IF ITS > WINDOW, DROP IT
+	if(packet_tcp.sequence > low_seq + WINDOW_SIZE){
+	    printf("GRTR WINDOW, seq=%d", packet_tcp.sequence);
+	    continue;
+	}
 	
-	//Send it to recv.
-	if(sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_recv, sizeof(sock_recv)) < 0)
-	    err("Error sending to recv");
-	debugf("Sent %d bytes to RECV(%d)", packet_tcpd.data_len, sock_recv.sin_port);
+	//TODO
+	//CHECK THE SEQUENCE NUMBER AGAINST WINDOW BUFFER
+	// ELSE Place it in the window in its spot.
+	debugf("Sequence = %d, lowSeq=%d", packet_tcp.sequence, low_seq);
+	it = cbuf.begin();counter = low_seq;
+	//it != cbuf.end() &&
+	while (counter <= low_seq + WINDOW_SIZE){
+	    debugf("Enter window check size=%d",cbuf.size());
+	    
+	    if(it == cbuf.end()){
+		debugf("sequence not found at end.");
+		//create an empty tcpd packet and push it to the back
+		tcpd_packet tmp_tcpd;
+		memset(&tmp_tcpd, 0, sizeof(tcpd_packet));
+		tmp_tcpd.sequence = counter;
+		tmp_tcpd.acked = 0;
+		cbuf.push_back(tmp_tcpd);	
+	    }
+	    
+	    if((*it).sequence == packet_tcp.sequence){
+		if(!(*it).acked){
+		    memcpy(&((*it).data), &packet_tcp.data, sizeof(packet_tcp.data));
+		    (*it).data_len = packet_tcp.data_len;
+		    (*it).sequence = packet_tcp.sequence;
+		    (*it).acked = 1;
+		}
+		break;
+	    }
+	    ++it;counter++;
+	}
+
+	debugf("buffer length=%d", cbuf.size());
+
+	//Send the ACK
+	//Always send a packet since were assured this is <= max
+	//sequence for the window
+	sock_tcp.sin_addr.s_addr = sock_from.sin_addr.s_addr;
+	sock_tcp.sin_port = htons(sock_from.sin_port);
+	sendAck(packet_tcp.sequence + 1, packet_tcp.source_port, sock_tcp);
+	
+	//Send all received packets to the recv in the front of the buffer.
+	it = cbuf.begin();
+	while (it != cbuf.end()){
+	    debugf("CHECK BUFF seq=%d acked=%d", (*it).sequence, (*it).acked);
+	    if((*it).acked == 1){
+		packet_tcpd = (*it);
+		
+		usleep(1 * 1000);//prevents UDP bffr overflow
+		if(sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_recv, sock_recv_len) < 0)
+		    err("Error sending to recv");
+		debugf("Sent %d bytes to RECV(%d)", packet_tcpd.data_len, sock_recv.sin_port);
+		cbuf.pop_front();
+		low_seq++;
+	    }else{
+		break;
+	    }
+	}
+	printf("\n");
 	
     }
     close(sock);
     close(sock_ext);
+}
+
+void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination){
+    
+    usleep(1 * 1000);//prevents UDP bffr overflow
+    
+    //Compile the data into a tcp packet
+    tcp_packet packet_tcp;
+    memset(&packet_tcp, 0, sizeof(tcp_packet));
+
+    //Set some additional TCP fields
+    packet_tcp.ack = ack;
+    packet_tcp.ACK = 1;
+
+    //Calculate CRC and place it into the packet
+    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
+    
+    destination.sin_port = htons(port);
+    
+    //Ready it for the troll
+    NetMessage msg;
+    memset(&msg, 0, sizeof(NetMessage));
+    memcpy(&msg.msg_header, &destination, sizeof(sockaddr_in));
+    memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
+    
+    if(sendto(sock_ext, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_from, fromlen) < 0)
+	err("Error sending to Troll ack=%d", ack);
+    
+    debugf("SENT ACK==%d, port=%d", ack, port);
 }

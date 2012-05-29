@@ -24,33 +24,26 @@ using namespace std;
 int main(int argc, char* argv[]){
 
     int sock; // initial socket descriptor 
-    struct sockaddr_in sock_tcpd; // sock for tcpd connection
+    struct sockaddr_in sock_tcp; // sock for tcp connection
     char buf[1000]; // buffer for holding read data 
   
     if (argc < 2)
 	err("usage: %s <local-port>", argv[0]);
 
     /*initialize socket connection in unix domain*/
-    if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    if((sock = SOCKET(AF_INET, SOCK_DGRAM, 0)) < 0)
 	err("Error openting datagram socket");
 
     debugf("Created socket = %d", sock);
     
-    /* The server info for the FTPD */
-    name_server.sin_family = AF_INET;
-    name_server.sin_addr.s_addr = INADDR_ANY;
-    name_server.sin_port = htons(atoi(argv[1]));
-
     /* The local info talk to TCPD */
-    sock_tcpd.sin_family = AF_INET;
-    sock_tcpd.sin_addr.s_addr = INADDR_ANY;
-    sock_tcpd.sin_port = htons(0); //Bind to any port
+    sock_tcp.sin_family = AF_INET;
+    sock_tcp.sin_addr.s_addr = INADDR_ANY;
+    sock_tcp.sin_port = htons(atoi(argv[1]));
     
     /* Bind FTPS to Local TCPD */
-    if(bind(sock, (struct sockaddr *)&sock_tcpd, sizeof(struct sockaddr_in)) < 0)
+    if(BIND(sock, (struct sockaddr *)&sock_tcp, sizeof(struct sockaddr_in)) < 0)
 	err("Error binding stream socket");
-    
-    debugf("Binded to a local port");
     
     bzero(buf, 1000);
     char file_name[255];

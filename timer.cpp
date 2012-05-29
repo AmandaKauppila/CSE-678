@@ -28,12 +28,13 @@ typedef struct{
     int sequence;
     unsigned long timeout; //ms
     unsigned long timeout_time; //ms
+    unsigned short port;
 } Node;
 
 list<Node> dlist;
 list<Node>::iterator it; //used for looping dlist
 
-int removeNode(int seq);
+int removeNode(int seq, short port);
 void addNode(Node node);
 
 /*
@@ -71,7 +72,9 @@ int main(){
     // socket vars
     int sock;// only need one socket for both sending and receiving
     struct sockaddr_in sock_timer,
-                       sock_tcpd;
+	               sock_destination,
+	               sock_from;
+    socklen_t fromlen;
     /* initialize send socket connection for UDP (DGRAM for UDP,
      * STREAM for TCP) in unix domain */
     sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -82,10 +85,11 @@ int main(){
     sock_timer.sin_family = AF_INET;
     sock_timer.sin_port = ntohs(TIMER_PORT);
     sock_timer.sin_addr.s_addr = INADDR_ANY;
-    // setup socket address to tcpd
-    sock_tcpd.sin_family = AF_INET;
-    sock_tcpd.sin_port = htons(TCPD_CLIENT_PORT);
-    sock_tcpd.sin_addr.s_addr = INADDR_ANY;
+    
+    sock_destination.sin_family = AF_INET;
+    sock_destination.sin_addr.s_addr = INADDR_ANY;
+    
+    fromlen = sizeof(sock_from);
     
     if(bind(sock, (struct sockaddr *)&sock_timer, sizeof(sock_timer)) < 0)
 	err("Error binding timer port %d", sock_timer.sin_port);
@@ -108,7 +112,7 @@ int main(){
 	if(retval > 0){
 	    // read recv
 	    memset(&packet, 0, sizeof(timer_packet));// clear the packet	    
-	    if(recvfrom(sock, &packet, sizeof(timer_packet), 0, NULL, NULL) < 0)
+	    if(recvfrom(sock, &packet, sizeof(timer_packet), 0, (struct sockaddr *)&sock_from, &fromlen) < 0)
 		err("Error reading from socket");
 	    
 	    if(packet.SEQ == 1){
@@ -117,13 +121,13 @@ int main(){
 		tmp.sequence = packet.sequence;
 		tmp.timeout = packet.timeout;
 		tmp.timeout_time = gettimeofday_ms() + tmp.timeout;
-
+		tmp.port = sock_from.sin_port;
 		addNode(tmp);
 		
 	    }else if(packet.ACK == 1){
 		// remove from list
-		removeNode(packet.sequence);
-		debugf("ACKED seq=%d", packet.sequence);
+		debugf("ACKED seq=%d port=%d", packet.sequence, sock_from.sin_port);
+		removeNode(packet.sequence, sock_from.sin_port);
 	    }
 	
 	}
@@ -139,13 +143,17 @@ int main(){
 	    time_diff = it_node.delta - time_delta;
 	    //debugf("Checking time_diff=%d", time_diff);
 	    while(time_diff <= 0){
+		usleep(1 * 1000);//Prevents buffer overflow.
 		//ready and send the tcpd packet
-		debugf("TIMEOUT, seq=%d", it_node.sequence);
+		debugf("TIMEOUT seq=%d port=%d", it_node.sequence, it_node.port);
 		tcpd_packet packet_tcpd;
 		memset(&packet_tcpd, 0, sizeof(tcpd_packet));
-		packet_tcpd.type = TIMEOUT;
+		packet_tcpd.type = TYPE_TIMEOUT;
 		packet_tcpd.sequence = it_node.sequence;
-		sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
+		// setup socket address to destination
+		sock_destination.sin_port = htons(it_node.port);
+		if(sendto(sock, &packet_tcpd, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_destination, sizeof(sock_destination)) < 0)
+		    err("Error sending timeout for seq=%d", it_node.sequence);
 		time_delta = time_delta - it_node.delta;
 		dlist.pop_front();//remove the timed out timer
 		
@@ -162,15 +170,30 @@ int main(){
 
 //helper function for the removeNode function.
 int sequenceToRemove;
+short portToRemove;
 bool isSeqToRemove(const Node &value) { 
-    return (value.sequence == sequenceToRemove); 
+    return (value.sequence == sequenceToRemove && value.port == portToRemove); 
 }
 
 //Removes a node from the dlist given
 //a sequence number
-int removeNode(int seq){
-    sequenceToRemove = seq;
-    dlist.remove_if(isSeqToRemove);
+int removeNode(int seq, short port){
+
+    //move the time off this item to the next on the list.
+    for (it=dlist.begin() ; it != dlist.end(); it++ ){
+	Node it_node = (Node)*it;
+	if(it_node.sequence == seq && it_node.port == port){
+	    unsigned long tmp_delta = it_node.delta;
+	    it = dlist.erase(it);
+	    if(it != dlist.end()){
+		it_node = (Node)*it;
+		debugf("Ading delta of %d to seq=%d", tmp_delta, it_node.sequence);
+		it_node.delta = it_node.delta + tmp_delta;
+		it_node.timeout_time = it_node.timeout_time + tmp_delta;
+	    }
+	    break;
+	}
+    }
 }
 
 void addNode(Node node){
@@ -186,8 +209,6 @@ void addNode(Node node){
 	    
 	    ++it;
 	    dlist.insert(it, node);
-	    
-	    debugf("ADDED seq=%d delta=%d timeout=%d timeout_time=%d", node.sequence, node.delta, node.timeout,node.timeout_time);
 	    break;
 	}
 	++it;
@@ -197,6 +218,6 @@ void addNode(Node node){
     if(it==dlist.begin()){
 	node.delta = node.timeout;
 	dlist.push_front(node);
-	debugf("ADDED FRONT seq=%d delta=%d timeout=%d timeout_time=%d", node.sequence, node.delta, node.timeout, node.timeout_time);
     }
+    debugf("ADDED seq=%d port=%d delta=%d timeout=%d timeout_time=%d", node.sequence, node.port, node.delta, node.timeout, node.timeout_time);
 }
