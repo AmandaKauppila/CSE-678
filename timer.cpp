@@ -126,8 +126,8 @@ int main(){
 		
 	    }else if(packet.ACK == 1){
 		// remove from list
-		removeNode(packet.sequence, sock_from.sin_port);
 		debugf("ACKED seq=%d port=%d", packet.sequence, sock_from.sin_port);
+		removeNode(packet.sequence, sock_from.sin_port);
 	    }
 	
 	}
@@ -178,9 +178,22 @@ bool isSeqToRemove(const Node &value) {
 //Removes a node from the dlist given
 //a sequence number
 int removeNode(int seq, short port){
-    sequenceToRemove = seq;
-    portToRemove = port;
-    dlist.remove_if(isSeqToRemove);
+
+    //move the time off this item to the next on the list.
+    for (it=dlist.begin() ; it != dlist.end(); it++ ){
+	Node it_node = (Node)*it;
+	if(it_node.sequence == seq && it_node.port == port){
+	    unsigned long tmp_delta = it_node.delta;
+	    it = dlist.erase(it);
+	    if(it != dlist.end()){
+		it_node = (Node)*it;
+		debugf("Ading delta of %d to seq=%d", tmp_delta, it_node.sequence);
+		it_node.delta = it_node.delta + tmp_delta;
+		it_node.timeout_time = it_node.timeout_time + tmp_delta;
+	    }
+	    break;
+	}
+    }
 }
 
 void addNode(Node node){

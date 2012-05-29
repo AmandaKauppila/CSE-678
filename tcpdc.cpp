@@ -139,12 +139,22 @@ int main(int argc, char* argv[]){
 	    debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
 	
 	    if(checksum != checksum_in){
-		printf("CHECKSUM ERROR, Seq=%d\n", packet_tcp.sequence);
+		printf("CHECKSUM ERROR, ack=%d\n", packet_tcp.ack);
 		//drop the packet
 		continue;
 	    }
 
-	    ackTimer(packet_tcp.sequence);
+	    //ack it
+	    it = cbuf.begin();counter = 1;
+	    while (it != cbuf.end() && counter <= WINDOW_SIZE){
+		if((*it).sequence == packet_tcp.ack - 1){
+		    (*it).acked = 1;break;
+		}
+		++it;counter++;
+	    }
+
+	    //Tell the timer were acked.
+	    ackTimer(packet_tcp.ack - 1);
 
 	    //slide the timer over if possible
 	    it = cbuf.begin();
@@ -253,14 +263,14 @@ void createAndSendTcpPacket(tcpd_packet packet_tcpd){
     memset(&packet_tcp, 0, sizeof(tcp_packet));
     memcpy(&packet_tcp.data, &packet_tcpd.data, sizeof(packet_tcpd.data));
     packet_tcp.data_len = packet_tcpd.data_len;
-	
-    //Calculate CRC and place it into the packet
-    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
 
     //Set some additional TCP fields
     packet_tcp.sequence = packet_tcpd.sequence;
-    packet_tcp.source_port = TCPD_SERVER_PORT;
+    packet_tcp.source_port = TCPD_CLIENT_PORT;
     packet_tcp.destination_port = packet_tcpd.sock_dest.sin_port;
+
+    //Calculate CRC and place it into the packet
+    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
 	
     //Ready it for the troll
     NetMessage msg;

@@ -28,8 +28,9 @@
 // Defines --------------------------------------------
 #define TCPD_CLIENT_PORT 9095
 #define TCPD_SERVER_PORT 9096
+#define TCPD_RECV_PORT 9097
 #define TIMER_PORT 8595
-#define TROLL_PORT 8596
+#define TROLL_PORT 9000
 #define MAX_DATA_SIZE 1000
 #define DEFAULT_TIMEOUT 3000
 #define WINDOW_SIZE 20
@@ -39,8 +40,6 @@
 #define TYPE_SEND 2
 #define TYPE_CLOSE 4
 
-//Specifies the address and port of the server. Global
-//since accept and connect are not functioning yet.
 struct sockaddr_in name_server;
 
 /*
@@ -55,6 +54,7 @@ typedef struct tcpd_packet {
     uint32_t sequence;
     unsigned sent : 1; //record if sent to receiver
     unsigned acked : 1; //record if acked from receiver
+    unsigned short port;
 };
 
 typedef struct timer_packet {
@@ -147,14 +147,77 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
 size_t RECV(int sockfd, void *buf, size_t len, int flags){
      /*
      * Implementation
-     *  1. Tells the TCPD on which port to RECV on via a UDP message
-     *  2. Waits for a message from the TCPD
-     *  3. Copies the messages data to buf and returns the length
-     *
-     *  Notes:
-     *  - sock_dest of the tcpd packet is used to instruct the tcpd
-     *    on which port to listen on
+     *  1. Waits for a message from the TCPD
+     *  2. Copies the messages data to buf and returns the length
      */
+    debugf("in recv!\n");
+    struct sockaddr_in localaddr;
+    /* ... and bind its local address */
+    bzero((char *)&localaddr, sizeof localaddr);
+    localaddr.sin_family = AF_INET;
+    localaddr.sin_addr.s_addr = INADDR_ANY;
+    localaddr.sin_port = htons(TCPD_RECV_PORT);
+    int sockTmp = socket(AF_INET, SOCK_DGRAM, 0);
+    if(bind(sockTmp, (struct sockaddr *)&localaddr, sizeof localaddr) < 0)
+	err("Failed to bind on RECV");	    
+    
+    /* Wait for data from tcpd */
+    tcpd_packet packet;
+    memset(&packet, 0, sizeof(tcpd_packet)); //clear packet
+    if(recv(sockTmp, (char *)&packet, sizeof(tcpd_packet), 0) < 0)
+	err("Failed to recv from TCPDS");
+
+    close(sockTmp);
+    
+    bzero(buf, MAX_DATA_SIZE);
+    memcpy(buf, &packet.data, packet.data_len);
+    return packet.data_len;
+}
+
+int SOCKET(int family, int type, int protocol){
+	/*
+	* Implementation
+	* 1.  Attempts to create socket with UDP function call
+	* 2.  If socket is not created, retries creating socket until it is created
+	* 3.  To prevent infinite loop, set a timeout, but set it high- try 1000 times-- server side is not connected to our delta timer
+	* 4.  return socket ID
+	*/
+	debugf("in socket!\n");
+	int attempts = 0;
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+	while ((sock < 0) && (attempts < 1000)){
+		attempts++;
+		sleep(1);
+		sock = socket(AF_INET, SOCK_DGRAM, 0);
+		printf("in loop in socket.  attempts = %d\n", attempts);
+	}
+	
+	return sock;
+}
+
+int BIND(int sockfd, struct sockaddr *my_addr, socklen_t addrlen){
+
+    /*
+     * Implementation
+     * 1. assigns port to the unnamed socket
+     * 2.  returns 0 on success
+     *//*
+	 debugf("in bind!\n");
+	 int attempts = 0;
+	 int addr = bind(sockfd, my_addr, addrlen);
+	 while((addr < 0) && (attempts < 1000)){
+	 attempts++;
+	 sleep(1);
+	 addr = bind(sockfd, my_addr, addrlen);
+	 printf("in loop in bind.  attempts = %d\n", attempts);
+	 }*/
+    
+    /*
+     * Implementation
+     *   Tell the TCPD which socket were using
+     *   for external communication
+     */
+    
     struct sockaddr_in sock_tcpd;
     tcpd_packet packet;
     
@@ -163,58 +226,12 @@ size_t RECV(int sockfd, void *buf, size_t len, int flags){
     sock_tcpd.sin_addr.s_addr = INADDR_ANY;
     
     memset(&packet, 0, sizeof(tcpd_packet)); //clear packet
-    memcpy(&packet.sock_dest, &name_server, sizeof(sockaddr_in));
-    if(sendto(sockfd, &packet, sizeof(tcpd_packet), flags, (const struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd)) < 0)
+    memcpy(&packet.sock_dest, my_addr, sizeof(sockaddr));
+    if(sendto(sockfd, &packet, sizeof(tcpd_packet), 0, (const struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd)) < 0)
 	err("Failed to send RECV to TCPDS");
-
-    /* Wait for data from tcpd */
-    memset(&packet, 0, sizeof(tcpd_packet)); //clear packet
-    if(recv(sockfd, (char *)&packet, sizeof(tcpd_packet), 0) < 0)
-	err("Failed to recv from TCPDS");
-    //debugf("RECV Received len=%d", packet.data_len);
-    bzero(buf, MAX_DATA_SIZE);
-    memcpy(buf, &packet.data, packet.data_len);
-    return packet.data_len;
-}
-
-int SOCKET(	int family, int type, int protocol){
-	/*
-	* Implementation
-	* 1.  Attempts to create socket with UDP function call
-	* 2.  If socket is not created, retries creating socket until it is created
-	* 3.  To prevent infinite loop, set a timeout, but set it high- try 1000 times-- server side is not connected to our delta timer
-	* 4.  return socket ID
-	*/
-	printf("in socket!\n");
-	int attempts = 0;
-	int sock = socket(AF_INET, SOCK_DGRAM, 0);
-	while ((sock < 0) && (attempts < 1000)){
-		attempts++;
-		sleep(1);
-		sock = SOCKET(AF_INET, SOCK_DGRAM, 0);
-		printf("in loop in socket.  attempts = %d\n", attempts);
-	}
 	
-	return sock;
-}
-
-int BIND (int sockfd, struct sockaddr *my_addr, socklen_t addrlen){
-	/*
-	* Implementation
-	* 1. assigns port to the unnamed socket
-	* 2.  returns 0 on success
-	*/
-	printf("in bind!\n");
-	int attempts = 0;
-	int addr = bind(sockfd, my_addr, addrlen);
-	while((addr < 0) && (attempts < 1000)){
-		attempts++;
-		sleep(1);
-		addr = bind(sockfd, my_addr, addrlen);
-		printf("in loop in bind.  attempts = %d\n", attempts);
-	}
-	
-	return addr;
+    return 1;
+    
 }
 
 int ACCEPT(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen){
