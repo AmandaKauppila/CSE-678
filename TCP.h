@@ -150,7 +150,6 @@ size_t RECV(int sockfd, void *buf, size_t len, int flags){
      *  1. Waits for a message from the TCPD
      *  2. Copies the messages data to buf and returns the length
      */
-    debugf("in recv!\n");
     struct sockaddr_in localaddr;
     /* ... and bind its local address */
     bzero((char *)&localaddr, sizeof localaddr);
@@ -158,12 +157,13 @@ size_t RECV(int sockfd, void *buf, size_t len, int flags){
     localaddr.sin_addr.s_addr = INADDR_ANY;
     localaddr.sin_port = htons(TCPD_RECV_PORT);
     int sockTmp = socket(AF_INET, SOCK_DGRAM, 0);
-    if(bind(sockTmp, (struct sockaddr *)&localaddr, sizeof localaddr) < 0)
+    if(bind(sockTmp, (struct sockaddr *)&localaddr, sizeof(localaddr)) < 0)
 	err("Failed to bind on RECV");	    
     
     /* Wait for data from tcpd */
     tcpd_packet packet;
     memset(&packet, 0, sizeof(tcpd_packet)); //clear packet
+    debugf("Waiting for packet on port=%d", localaddr.sin_port);
     if(recv(sockTmp, (char *)&packet, sizeof(tcpd_packet), 0) < 0)
 	err("Failed to recv from TCPDS");
 

@@ -89,6 +89,7 @@ int main(int argc, char* argv[]){
 
     unsigned short curr_port = 0;
     unsigned int low_seq = 0;
+    bool init_seq = false;
 
     int total_read = 0;
     unsigned int counter;
@@ -103,7 +104,9 @@ int main(int argc, char* argv[]){
     sock_recv_len = sizeof(sock_recv);
     if(recvfrom(sock, &packet_tcpd, sizeof(packet_tcpd), 0, (struct sockaddr *)&sock_recv, &sock_recv_len) < 0)
 	err("Invalid receive from BIND");
-    
+
+    //Ready for recv
+    sock_recv.sin_port = TCPD_RECV_PORT;
     curr_port = packet_tcpd.port;
     
     /* bind TCPD Server to Local Port */
@@ -133,8 +136,6 @@ int main(int argc, char* argv[]){
 	 * 5. Return to STEP(1) waiting for another TCP connection
 	 */
 	debugf("Waiting for TCP Packet");
-
-	
 	
 	NetMessage msg;
 	memset(&msg, 0, sizeof(NetMessage));
@@ -173,8 +174,20 @@ int main(int argc, char* argv[]){
 	// ELSE Place it in the window in its spot.
 	debugf("Sequence = %d, lowSeq=%d", packet_tcp.sequence, low_seq);
 	it = cbuf.begin();counter = low_seq;
-	while (it != cbuf.end() && counter <= low_seq + WINDOW_SIZE){
+	//it != cbuf.end() &&
+	while (counter <= low_seq + WINDOW_SIZE){
 	    debugf("Enter window check size=%d",cbuf.size());
+	    
+	    if(it == cbuf.end()){
+		debugf("sequence not found at end.");
+		//create an empty tcpd packet and push it to the back
+		tcpd_packet tmp_tcpd;
+		memset(&tmp_tcpd, 0, sizeof(tcpd_packet));
+		tmp_tcpd.sequence = counter;
+		tmp_tcpd.acked = 0;
+		cbuf.push_back(tmp_tcpd);	
+	    }
+	    
 	    if((*it).sequence == packet_tcp.sequence){
 		if(!(*it).acked){
 		    memcpy(&((*it).data), &packet_tcp.data, sizeof(packet_tcp.data));
@@ -183,17 +196,6 @@ int main(int argc, char* argv[]){
 		    (*it).acked = 1;
 		}
 		break;
-	    }
-	    //if we reach the end of the list,
-	    //it means we need to add it to the window.
-	    if(&(*it) == &cbuf.back()){
-		debugf("sequence not found at end.");
-		//create an empty tcpd packet and push it to the back
-		tcpd_packet tmp_tcpd;
-		memset(&tmp_tcpd, 0, sizeof(tcpd_packet));
-		tmp_tcpd.sequence = counter;
-		tmp_tcpd.acked = 0;
-		cbuf.push_back(tmp_tcpd);
 	    }
 	    ++it;counter++;
 	}
@@ -219,6 +221,7 @@ int main(int argc, char* argv[]){
 		    err("Error sending to recv");
 		debugf("Sent %d bytes to RECV(%d)", packet_tcpd.data_len, sock_recv.sin_port);
 		cbuf.pop_front();
+		low_seq++;
 	    }else{
 		break;
 	    }
