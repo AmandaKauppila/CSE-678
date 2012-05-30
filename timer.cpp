@@ -168,29 +168,22 @@ int main(){
     }
 }
 
-//helper function for the removeNode function.
-int sequenceToRemove;
-short portToRemove;
-bool isSeqToRemove(const Node &value) { 
-    return (value.sequence == sequenceToRemove && value.port == portToRemove); 
-}
-
 //Removes a node from the dlist given
 //a sequence number
 int removeNode(int seq, short port){
 
     //move the time off this item to the next on the list.
     for (it=dlist.begin() ; it != dlist.end(); it++ ){
-	Node it_node = (Node)*it;
-	if(it_node.sequence == seq && it_node.port == port){
-	    unsigned long tmp_delta = it_node.delta;
-	    it = dlist.erase(it);
+	if((*it).sequence == seq && (*it).port == port){
+	    unsigned long tmp_delta = (*it).delta;
+	    it++;
 	    if(it != dlist.end()){
-		it_node = (Node)*it;
-		debugf("Ading delta of %d to seq=%d", tmp_delta, it_node.sequence);
-		it_node.delta = it_node.delta + tmp_delta;
-		it_node.timeout_time = it_node.timeout_time + tmp_delta;
+		debugf("Ading delta of %d to seq=%d to=%d##################", tmp_delta, (*it).sequence, (*it).timeout_time);
+		(*it).delta = (*it).delta + tmp_delta;
+		(*it).timeout_time = (*it).timeout_time + tmp_delta;
 	    }
+	    it--;
+	    dlist.erase(it);
 	    break;
 	}
     }

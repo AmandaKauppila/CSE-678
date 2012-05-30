@@ -40,6 +40,16 @@
 typedef circular_buffer<tcpd_packet> cbuf_tcp;
 cbuf_tcp cbuf(64);
 
+void printBuffer(){
+    cbuf_tcp::iterator it = cbuf.begin();
+    printf("[Buffer] %d [", cbuf.size());
+    while (it != cbuf.end()){
+	printf("%d-%d,",(*it).sequence,(*it).acked);
+	it++;
+    }
+    printf("]\n");
+}
+
 
 void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination);
 
@@ -89,7 +99,6 @@ int main(int argc, char* argv[]){
 
     unsigned short curr_port = 0;
     unsigned int low_seq = 0;
-    bool init_seq = false;
 
     int total_read = 0;
     unsigned int counter;
@@ -135,7 +144,7 @@ int main(int argc, char* argv[]){
 	 * 4. Cleanup used resources
 	 * 5. Return to STEP(1) waiting for another TCP connection
 	 */
-	debugf("Waiting for TCP Packet");
+	debugf("----Waiting for TCP Packet----");
 	
 	NetMessage msg;
 	memset(&msg, 0, sizeof(NetMessage));
@@ -150,8 +159,8 @@ int main(int argc, char* argv[]){
 	packet_tcp.checksum = 0;
 	int checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
 	
-	debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
-	
+	//debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
+
 	if(checksum != checksum_in){
 	    printf("CHECKSUM ERROR, seq=%d", packet_tcp.sequence);
 	    continue;
@@ -175,44 +184,46 @@ int main(int argc, char* argv[]){
 	debugf("Sequence = %d, lowSeq=%d", packet_tcp.sequence, low_seq);
 	it = cbuf.begin();counter = low_seq;
 	//it != cbuf.end() &&
-	while (counter <= low_seq + WINDOW_SIZE){
-	    debugf("Enter window check size=%d",cbuf.size());
+	while (counter <= low_seq + WINDOW_SIZE && packet_tcp.sequence >= low_seq){
 	    
 	    if(it == cbuf.end()){
-		debugf("sequence not found at end.");
+		//debugf("Sequence not found at end. Create seq=%d",counter);
 		//create an empty tcpd packet and push it to the back
 		tcpd_packet tmp_tcpd;
 		memset(&tmp_tcpd, 0, sizeof(tcpd_packet));
 		tmp_tcpd.sequence = counter;
 		tmp_tcpd.acked = 0;
-		cbuf.push_back(tmp_tcpd);	
+		cbuf.push_back(tmp_tcpd);
 	    }
 	    
 	    if((*it).sequence == packet_tcp.sequence){
-		if(!(*it).acked){
+		//debugf("Sequence found at end. Create seq=%d",packet_tcp.sequence);
+		if((*it).acked == 0){
 		    memcpy(&((*it).data), &packet_tcp.data, sizeof(packet_tcp.data));
 		    (*it).data_len = packet_tcp.data_len;
 		    (*it).sequence = packet_tcp.sequence;
 		    (*it).acked = 1;
+		    //debugf("Packet %d was acked to %d.", (*it).sequence,(*it).acked);
 		}
 		break;
 	    }
 	    ++it;counter++;
 	}
 
-	debugf("buffer length=%d", cbuf.size());
+//	debugf("buffer size=%d", cbuf.size());
+	printBuffer();
 
-	//Send the ACK
+	//Send the ACK 
 	//Always send a packet since were assured this is <= max
 	//sequence for the window
 	sock_tcp.sin_addr.s_addr = sock_from.sin_addr.s_addr;
 	sock_tcp.sin_port = htons(sock_from.sin_port);
-	sendAck(packet_tcp.sequence + 1, packet_tcp.source_port, sock_tcp);
+	sendAck(packet_tcp.sequence, packet_tcp.source_port, sock_tcp);
 	
 	//Send all received packets to the recv in the front of the buffer.
 	it = cbuf.begin();
 	while (it != cbuf.end()){
-	    debugf("CHECK BUFF seq=%d acked=%d", (*it).sequence, (*it).acked);
+	    //debugf("CHECK BUFF seq=%d acked=%d", (*it).sequence, (*it).acked);
 	    if((*it).acked == 1){
 		packet_tcpd = (*it);
 		
@@ -222,11 +233,11 @@ int main(int argc, char* argv[]){
 		debugf("Sent %d bytes to RECV(%d)", packet_tcpd.data_len, sock_recv.sin_port);
 		cbuf.pop_front();
 		low_seq++;
+		it = cbuf.begin();
 	    }else{
 		break;
 	    }
 	}
-	printf("\n");
 	
     }
     close(sock);

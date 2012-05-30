@@ -113,7 +113,7 @@ int main(int argc, char* argv[]){
 	 *    b. TIMEOUT
 	 *    c. CLOSE
 	 */
-	printf("\n");debugf("Waiting for a packet...");
+	debugf("##### Waiting for a packet ######");
 	fromlen = sizeof(fromlen);
 	total_read = recvfrom(sock, &buffer, sizeof(buffer), 0, (sockaddr *)&sock_from, &fromlen);
 
@@ -136,7 +136,7 @@ int main(int argc, char* argv[]){
 	    packet_tcp.checksum = 0;
 	    unsigned int checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
 	
-	    debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
+	    //debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
 	
 	    if(checksum != checksum_in){
 		printf("CHECKSUM ERROR, ack=%d\n", packet_tcp.ack);
@@ -147,20 +147,21 @@ int main(int argc, char* argv[]){
 	    //ack it
 	    it = cbuf.begin();counter = 1;
 	    while (it != cbuf.end() && counter <= WINDOW_SIZE){
-		if((*it).sequence == packet_tcp.ack - 1){
+		if((*it).sequence == packet_tcp.ack){
 		    (*it).acked = 1;break;
 		}
 		++it;counter++;
 	    }
 
 	    //Tell the timer were acked.
-	    ackTimer(packet_tcp.ack - 1);
+	    ackTimer(packet_tcp.ack);
 
 	    //slide the timer over if possible
 	    it = cbuf.begin();
 	    while (it != cbuf.end()){
 		if((*it).acked == 1){
 		    cbuf.pop_front();
+		    it = cbuf.begin();
 		}else{
 		    break;
 		}
