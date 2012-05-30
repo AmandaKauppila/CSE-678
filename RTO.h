@@ -6,7 +6,7 @@
 
 class RTO{
  public:
-  int getRTO(int m);
+  int getRTO(int m, int c);
   
 
  private:
@@ -18,6 +18,6 @@ class RTO{
   int rtt_counter;
   int g;
   int h;
-}
+};
 
 #endif
