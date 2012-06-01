@@ -6,7 +6,7 @@
   Implementation
    1. Opens 2 sockets, one for local communication, other
       for external communication.
-   2. Binds the local soacket to a static application port
+   2. Binds the local socket to a static application port
    3. Waits for a RECV call from the binded port.
    4. Binds the external port to the provided port via the
       RECV function

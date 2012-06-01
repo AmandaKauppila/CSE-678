@@ -32,7 +32,8 @@ void createAndSendTcpFinPacket(unsigned int seq, sockaddr_in destination);
 void createAndSendTcpAckPacket(unsigned int ack, sockaddr_in destination);
 void startTimer(uint32_t sequence, unsigned int timeout);
 void ackTimer(uint32_t sequence);
-
+unsigned long rtoCalc(unsigned long rtt);
+    
 typedef circular_buffer<tcpd_packet> cbuf_tcp;
 cbuf_tcp cbuf(64);
 
@@ -48,29 +49,34 @@ unsigned long rto = DEFAULT_TIMEOUT;
 double rto_A = 0;
 double rto_D = 3;
 
-//Used to calculate the RTO
-unsigned long rtoCalc(unsigned long rtt){
-    double M = rtt / 1000.0;
-    double tmp_A = rto_A;
-    rto_A = tmp_A + .125 * (double(M) - tmp_A);
-    rto_D = rto_D + .25 * ((double(M) - tmp_A) - rto_D);
-    //printf("A=%.3f, D=%.3f M=%.3f rtt=%d\n", rto_A, rto_D, M, rtt);
-    rto = long((rto_A + 4 * rto_D) * 1000);if(rto > MAXRTO)rto = MAXRTO;
-    return rto;
-}
 
 /*
  * Implementation
  *  1. Sets up local UDP for incoming send requests
- *  2. Wait for SEND
- *    a. Construct TCP packet
- *    b. Calculate CRC
- *    c. Ready the packet for the Troll
- *    d. Send the packet to the Troll
- *  3. Wait for SEND
- *
- *  Notes:
- *  - Add s0m3?
+ *  2. When a packet is received it does one of 2 things
+ *  3. If ITS A TCP Packets
+ *    a. Check the checksum
+ *    b. Inform the timer if its an ACK
+ *    c. Slide the window if required
+ *  4. IF ITS A TCPD Packet
+ *    a. If ITS A TIMEOUT
+ *       i. Resend the packet
+ *      ii. Restart the timer
+ *    b. IF ITS A CLOSE Call
+ *       i. Send the FIN
+ *      ii. Once the FINACK is received send ack
+ *     iii. After certain time close
+ *    c. ELSE ITS Packet to send
+ *       i. If the buffer is full wait to add
+ *          the packet until it opens up. Making send
+ *          wait till its gets placed.
+ *       i. Add the packet to the buffer for sending
+ *      ii. Tell send were ready for another packet
+ *  5. Check if the buffer has any packets to send in
+ *     the window
+ *    a.If so, send and start their timer.
+ *  6. Move the window if required.
+ *  
  */
 int main(int argc, char* argv[]){
     
@@ -135,10 +141,11 @@ int main(int argc, char* argv[]){
 	 * a tcp from troll or a tcpd from TCP or timer
 	 *  1. TCP
 	 *     An ACK
+	 *     An FINACK
 	 *  2. TCPD
 	 *    a. SEND
 	 *    b. TIMEOUT
-	 *    c. CLOS
+	 *    c. CLOSE
 	 */
 	debugf("##### Waiting for a packet ######");
 	fromlen = sizeof(fromlen);
@@ -315,7 +322,11 @@ int main(int argc, char* argv[]){
     printf("   TCPDC Connection closed succesfully\n");
     printf("=========================================\n");
 }
-
+/*
+ * Sends a message via UDP to the timer process
+ * telling it to start a timer for sequence with
+ * a RTO of timeout.
+ */
 void startTimer(uint32_t sequence, unsigned int timeout){
     //Ready it to the timer
     timer_packet packet_timer;
@@ -328,7 +339,12 @@ void startTimer(uint32_t sequence, unsigned int timeout){
 	err("Error sending SEQ to Timer");
 }
 
-
+/*
+ * Sends a message via UDP to the timer process
+ * telling it to remove an acked packet from the
+ * timer. Only the sequnce that should be removed
+ * is sent.
+ */
 void ackTimer(uint32_t sequence){
     timer_packet packet_timer; //Message for timer
     memset(&packet_timer, 0, sizeof(timer_packet));
@@ -338,6 +354,12 @@ void ackTimer(uint32_t sequence){
 	err("Error sending ACK to Timer for SEQ=%d");
     debugf("Sent ACK of %d to timer", packet_timer.sequence);
 }
+
+/*
+ * Creates a tcp packet, placing data and setting the
+ * appropriate flags to have sent to the troll process.
+ * The timer is also started here.
+ */
 void createAndSendTcpPacket(tcpd_packet packet_tcpd){
     
     tcp_packet packet_tcp;
@@ -372,6 +394,12 @@ void createAndSendTcpPacket(tcpd_packet packet_tcpd){
 
     packet_tcpd.sent = 1;
 }
+
+/*
+ * Sends a FIN packet via TCP to the server.
+ * This is used for cloasing a connection. This function
+ * is similar to sendTCP except for different flags.
+ */
 void createAndSendTcpFinPacket(unsigned int seq, sockaddr_in destination){
     
     tcp_packet packet_tcp;
@@ -396,6 +424,10 @@ void createAndSendTcpFinPacket(unsigned int seq, sockaddr_in destination){
     startTimer(packet_tcp.sequence, rto);
 }
 
+/*
+ * Sends a ACK packet to the server. This is used for closing
+ * a connection.
+ */
 void createAndSendTcpAckPacket(unsigned int ack, sockaddr_in destination){
     
     tcp_packet packet_tcp;
@@ -418,4 +450,17 @@ void createAndSendTcpAckPacket(unsigned int ack, sockaddr_in destination){
 	err("Error sending to Troll seq=%d", packet_tcp.ack);
 
     debugf("SENT ACK=%d, port=%d", ack, destination.sin_port);
+}
+
+
+//Used to calculate the RTO
+//The most recent RTO calculation is required..
+unsigned long rtoCalc(unsigned long rtt){
+    double M = rtt / 1000.0;
+    double tmp_A = rto_A;
+    rto_A = tmp_A + .125 * (double(M) - tmp_A);
+    rto_D = rto_D + .25 * ((double(M) - tmp_A) - rto_D);
+    //printf("A=%.3f, D=%.3f M=%.3f rtt=%d\n", rto_A, rto_D, M, rtt);
+    rto = long((rto_A + 4 * rto_D) * 1000);if(rto > MAXRTO)rto = MAXRTO;
+    return rto;
 }
