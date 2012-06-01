@@ -4,7 +4,41 @@
                  Course Project
 ----------------------------------------------
 
-Files:
+Requirements:
+
+  g++ compiler on the stdsun enviroment of 
+  cse.ohio-state.edu
+
+
+
+Installation Instruction:
+
+  1.Copy the files to a directory of choice
+  2.Using the unix command prompt change to 
+    the newly copied directory.
+  3.Run the command
+      % make
+
+
+  
+Usage Instructions:
+
+  1.Navigate to the program directory
+    and start the troll/tcpds/tcpdc proccesses 
+    using on the correspondng machines 
+    indicated by c for client and s for server
+      % tcpds
+      % tcpdc
+      % timer
+      % troll 9000
+  2.Send a file to the server using
+      % ftps <local-port>
+      % ftpc <remote-IP> <remote-port> <local-file-to-transfer>
+  3.The file is saved as ftp_<name>
+
+
+
+Included Files:
 
   Makefile
     The Makefile used for installing the 
@@ -25,6 +59,11 @@ Files:
     functions
   FTP.h
     Header containing the FTP packet structure
+  circular.h
+    Header file containing the implemenation of
+    a circular buffer used tcpd
+  checksum.h
+    checksum functions for TCP CRC
   utils.h
     Helper functions used globally throughout
     the application.
@@ -34,42 +73,3 @@ Files:
     The troll executable
   imgs
     Directory containing sample images to send
-
-Requirements:
-
-  g++ compiler on the stdsun enviroment of 
-  cse.ohio-state.edu
-
-Installation Instruction:
-
-  1.Copy the files to a directory of choice
-  2.Using the unix command prompt change to 
-    the newly copied directory.
-  3.Run the command
-      % make
-  
-Usage Instructions:
-
-  1.Navigate to the program directory
-    and start the troll/tcpds/tcpdc proccesses 
-    using on the correspondng machines 
-    indicated by c for client and s for server
-      % tcpds
-      % tcpdc
-      % timer
-      % troll 8585
-  2.Send a file to the server using
-      % ftps <local-port>
-      % ftpc <remote-IP> <remote-port> <local-file-to-transfer>
-  3.The file is saved as ftp_<name>
-
-RELEASE NOTES:
------------------------------------------------
-
-V1.0
-
-  - The Resending of packets is not yet 
-    implemented. Therefore trolling may cause 
-    the transfer to fail/create problems.
-  - The TCPD only ACKs the timer 10% of all 
-    packets for testing purposes
