@@ -45,7 +45,7 @@ int main(int argc, char* argv[]){
 	err("The file specified could not be loaded\n");
     
     /* initialize socket connection in unix domain */
-    if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    if((sock = SOCKET(AF_INET, SOCK_DGRAM, 0)) < 0)
 	err("Error opening datagram socket\n");
 
     hp = gethostbyname(argv[1]);
@@ -103,6 +103,8 @@ int main(int argc, char* argv[]){
 	cumalative_sent += total_sent;
 	debugf("\nSent %d of %d", cumalative_sent, filestatus.st_size+20+4);	 
     }
+
+    CLOSE(sock);
     
     printf("File '%s' Sent.\n", packet_header.name);
 

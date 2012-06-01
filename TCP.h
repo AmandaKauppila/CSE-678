@@ -26,13 +26,15 @@
 #define TCP_H_GUARD
 
 // Defines --------------------------------------------
-#define TCPD_CLIENT_PORT 9095
-#define TCPD_SERVER_PORT 9096
-#define TCPD_RECV_PORT 9097
-#define TIMER_PORT 8595
+#define TCPD_CLIENT_PORT 8010
+#define TCPD_SERVER_PORT 8011
+#define TCPD_RECV_PORT 8012
+
+#define TIMER_PORT 8013
 #define TROLL_PORT 9000
 #define MAX_DATA_SIZE 1000
-#define DEFAULT_TIMEOUT 3000
+#define DEFAULT_TIMEOUT 1000
+#define MAXRTO 1500
 #define WINDOW_SIZE 20
 
 //Common TYPE's used throughout the TCP protocal
@@ -55,6 +57,7 @@ typedef struct tcpd_packet {
     unsigned sent : 1; //record if sent to receiver
     unsigned acked : 1; //record if acked from receiver
     unsigned short port;
+    unsigned long timestamp;
 };
 
 typedef struct timer_packet {
@@ -113,8 +116,17 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
      *    and length of the data.
      */
     
-    struct sockaddr_in sock_tcpd;
+    struct sockaddr_in sock_tcpd, localaddr;
     tcpd_packet packet;
+
+    bzero((char *)&localaddr, sizeof localaddr);
+    localaddr.sin_family = AF_INET;
+    localaddr.sin_addr.s_addr = INADDR_ANY;
+    localaddr.sin_port = 0;
+    
+    int sockTmp = socket(AF_INET, SOCK_DGRAM, 0);
+    if(bind(sockTmp, (struct sockaddr *)&localaddr, sizeof localaddr) <0)
+	err("Failed to bind for SEND");
     
     sock_tcpd.sin_family = AF_INET;
     sock_tcpd.sin_port = htons(TCPD_CLIENT_PORT);
@@ -127,13 +139,19 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
     packet.type = TYPE_SEND;
     
     //Sleep for 10ms
-    usleep(1 * 1000);
+    usleep(100 * 1000);
+
+    /* Send to the tcpd_c */
+    int result = sendto(sockTmp, &packet, sizeof(tcpd_packet), flags, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
 
     //TODO change it so the function waits for a confirmation that the
     //buffer is not full and that it can continue
+    tcpd_packet packet_in;
+    if(recv(sockTmp, (char *)&packet_in, sizeof(tcpd_packet), 0) < 0)
+	err("Failed to recv from TCPDC");
+    close(sockTmp);
     
-    /* Send to the tcpd_c */
-    return sendto(sockfd, &packet, sizeof(tcpd_packet), flags, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
+    return result;
 }
 
 /**
@@ -234,6 +252,22 @@ int BIND(int sockfd, struct sockaddr *my_addr, socklen_t addrlen){
     
 }
 
+void CLOSE(int sockfd){
+    struct sockaddr_in sock_tcpd;
+    tcpd_packet packet;
+    sock_tcpd.sin_family = AF_INET;
+    sock_tcpd.sin_port = htons(TCPD_CLIENT_PORT);
+    sock_tcpd.sin_addr.s_addr = INADDR_ANY;
+    
+    memset(&packet, 0, sizeof(tcpd_packet)); //clear packet
+    packet.type = TYPE_CLOSE;
+    memcpy(&packet.sock_dest, &name_server, sizeof(sockaddr_in));
+    if(sendto(sockfd, &packet, sizeof(tcpd_packet), 0, (const struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd)) < 0)
+	err("Failed to send CLOSE to TCPDS");
+    
+    close(sockfd);
+}
+
 int ACCEPT(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen){
 	// not implementing for this project
 }
@@ -241,5 +275,6 @@ int ACCEPT(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen){
 int CONNECT	(int sockfd, const struct sockaddr *serv_addr, socklen_t addrlen){
 	// not implementing for this project
 }
+
 #endif
 

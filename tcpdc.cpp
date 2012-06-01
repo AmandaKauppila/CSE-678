@@ -23,10 +23,13 @@
 #include "troll.h"
 #include "checksum.h"
 #include "circular.h"
+#include "timeval.h"
 
 using namespace std;
 
 void createAndSendTcpPacket(tcpd_packet packet_tcpd);
+void createAndSendTcpFinPacket(unsigned int seq, sockaddr_in destination);
+void createAndSendTcpAckPacket(unsigned int ack, sockaddr_in destination);
 void startTimer(uint32_t sequence, unsigned int timeout);
 void ackTimer(uint32_t sequence);
 
@@ -40,6 +43,22 @@ struct sockaddr_in sock_troll;
 struct sockaddr_in sock_timer;
 struct hostent *troll_host; //sets up locahost troll connection
 socklen_t fromlen;
+
+unsigned long rto = DEFAULT_TIMEOUT;
+double rto_A = 0;
+double rto_D = 3;
+
+//Used to calculate the RTO
+unsigned long rtoCalc(unsigned long rtt){
+    double M = rtt / 1000.0;
+    double tmp_A = rto_A;
+    rto_A = tmp_A + .125 * (double(M) - tmp_A);
+    rto_D = rto_D + .25 * ((double(M) - tmp_A) - rto_D);
+    //printf("A=%.3f, D=%.3f M=%.3f rtt=%d\n", rto_A, rto_D, M, rtt);
+    rto = long((rto_A + 4 * rto_D) * 1000);if(rto > MAXRTO)rto = MAXRTO;
+    return rto;
+}
+
 /*
  * Implementation
  *  1. Sets up local UDP for incoming send requests
@@ -56,6 +75,13 @@ socklen_t fromlen;
 int main(int argc, char* argv[]){
     
     tcp_packet packet_tcp; //Message for Network
+    tcpd_packet packet_tcpd_full;
+    struct sockaddr_in sock_from_full, sock_fin;
+    bool buff_full = false;
+    bool closing = false, fin_sent = false;
+    unsigned int seq_close;
+    int fin_timeout = 0;
+    
     NetMessage msg; //Message for Troll
     char buffer[MAXNETMESSAGE];//Holds the initial data from socket.
 
@@ -66,8 +92,9 @@ int main(int argc, char* argv[]){
     if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	err("Error openting datagram socket");
 
-    int n = 1024 * 1024;
+    int n = 1024 * 64;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n));
+    cbuf.reserve(n);
     
     debugf("Sockets Opened local=%d", sock);
     
@@ -111,12 +138,20 @@ int main(int argc, char* argv[]){
 	 *  2. TCPD
 	 *    a. SEND
 	 *    b. TIMEOUT
-	 *    c. CLOSE
+	 *    c. CLOS
 	 */
 	debugf("##### Waiting for a packet ######");
 	fromlen = sizeof(fromlen);
-	total_read = recvfrom(sock, &buffer, sizeof(buffer), 0, (sockaddr *)&sock_from, &fromlen);
 
+	if(closing && cbuf.size() == 0){
+	    createAndSendTcpFinPacket(sequence, sock_fin);
+	    fin_sent = true;
+	}
+	
+	total_read = recvfrom(sock, &buffer, sizeof(buffer), 0, (sockaddr *)&sock_from, &fromlen);
+	
+	if(fin_sent)fin_timeout++;
+	
 	//if from the troll its a TCP packet, else TCPD packet
 	if(sock_from.sin_port == sock_troll.sin_port){
 	    	
@@ -136,7 +171,7 @@ int main(int argc, char* argv[]){
 	    packet_tcp.checksum = 0;
 	    unsigned int checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
 	
-	    //debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
+	    debugf("Checksum = %d vs Calculated = %d", checksum_in, checksum);
 	
 	    if(checksum != checksum_in){
 		printf("CHECKSUM ERROR, ack=%d\n", packet_tcp.ack);
@@ -148,15 +183,24 @@ int main(int argc, char* argv[]){
 	    it = cbuf.begin();counter = 1;
 	    while (it != cbuf.end() && counter <= WINDOW_SIZE){
 		if((*it).sequence == packet_tcp.ack){
-		    (*it).acked = 1;break;
+		    (*it).acked = 1;
+		    rtoCalc(gettimeofday_ms() - (*it).timestamp);
+		    //printf("RTT=%d RTO=%d", gettimeofday_ms() - (*it).timestamp, rto);
+		    break;
 		}
 		++it;counter++;
 	    }
 
 	    //Tell the timer were acked.
 	    ackTimer(packet_tcp.ack);
+	    
+	    //FINACK has been received
+	    if(packet_tcp.ack == seq_close +1){
+		createAndSendTcpAckPacket(packet_tcp.sequence + 1, sock_fin);
+		break;
+	    }
 
-	    //slide the timer over if possible
+	    //slide the window over if possible
 	    it = cbuf.begin();
 	    while (it != cbuf.end()){
 		if((*it).acked == 1){
@@ -174,9 +218,8 @@ int main(int argc, char* argv[]){
 	    memcpy(&packet_tcpd, &buffer, sizeof(packet_tcpd));
 
 	    //If the packets a timeout, resend it
-	    if(packet_tcpd.type == TYPE_TIMEOUT){
+	    if(packet_tcpd.type == TYPE_TIMEOUT && fin_timeout <=3){
 		debugf("TIMEOUT: PACKET %d", packet_tcpd.sequence);
-		//TODO Find the packet in the window, and resend it
 		it = cbuf.begin();counter = 1;
 		while (it != cbuf.end() && counter <= WINDOW_SIZE){
 		    if((*it).sequence == packet_tcpd.sequence){
@@ -189,46 +232,88 @@ int main(int argc, char* argv[]){
 	    }
 
 	    //IF the packet is a CLOSE, send a FIN
-	    if(packet_tcpd.type == TYPE_CLOSE){
-		debugf("CLOSE Connection");
-		//TODO close the connection
-		continue;
+	    if(packet_tcpd.type == TYPE_CLOSE && !closing){
+		sequence++;
+		seq_close = sequence;
+		debugf("CLOSE Connection FIN seq=%d", sequence);
+		closing = true;
+		memset(&sock_fin, 0, sizeof(sockaddr));
+		memcpy(&sock_fin, &packet_tcpd.sock_dest, sizeof(packet_tcpd.sock_dest));
 	    }
 
-	    debugf("Contained %d Bytes of Data\n", packet_tcpd.data_len);
+	    //If where closing we no longer take data to send
+	    if(!closing){
+		debugf("Contained %d Bytes of Data\n", packet_tcpd.data_len);
 	    
-	    //Place it in the buffer
-	    if(cbuf.size() == cbuf.capacity()){
-		//if the buffer is full, must force SEND to wait
-		//until it frees up. To do this via implementation we
-		//should set a flag and location to hold the data that
-		//needs to be buffered. When the buffer frees up we
-		//push the data on the end and tell the SEND function
-		//were ready for more.
-
-		//TODO implement
-
+		//Place it in the buffer
+		if(cbuf.size() == cbuf.capacity()){
+		    //if the buffer is full, must force SEND to wait
+		    //until it frees up. To do this via implementation we
+		    //should set a flag and location to hold the data that
+		    //needs to be buffered. When the buffer frees up we
+		    //push the data on the end and tell the SEND function
+		    //were ready for more.;
+		    memset(&packet_tcpd_full, 0, sizeof(tcpd_packet));
+		    memcpy(&packet_tcpd_full, &packet_tcpd, sizeof(packet_tcpd));
+		    memset(&sock_from_full, 0, sizeof(sockaddr));
+		    memcpy(&sock_from_full, &sock_from, sizeof(sock_from));
+		    buff_full = true;
+		    debugf("BUFFER WAS FULL");
+		}else{
+		    packet_tcpd.acked = 0;
+		    packet_tcpd.sent = 0;
+		    packet_tcpd.sequence = sequence++;
+		    cbuf.push_back(packet_tcpd);
 		
-		debugf("BUFFER WAS FULL");
-	    }else{
-		packet_tcpd.acked = 0;
-		packet_tcpd.sent = 0;
-		packet_tcpd.sequence = sequence++;
-		cbuf.push_back(packet_tcpd);
-		//Tell SEND it was succefull.
+		    //Tell SEND it was succefull.
+		    tcpd_packet packet_tcpd_send; //Messages within TCPD
+		    memset(&packet_tcpd_send, 0, sizeof(tcpd_packet));
+		    packet_tcpd_send.sent = 1;
+		    if(sendto(sock, (char *)&packet_tcpd_send, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_from, sizeof sock_from) < 0)
+			err("Error sending SEQ to Timer");
+		}//buff full
+	    
+	    }//!closing
+	}//packet type
+	
+	//send everthing currently not sent
+	it = cbuf.begin();counter = 1;
+	while (it != cbuf.end() && counter <= WINDOW_SIZE){
+	    if((*it).sent == 0){
+		createAndSendTcpPacket((*it));
+		(*it).sent = 1;
+		(*it).timestamp = gettimeofday_ms();
 	    }
-	    //send everthing currently not sent
-	    it = cbuf.begin();counter = 1;
-	    while (it != cbuf.end() && counter <= WINDOW_SIZE){
-		if((*it).sent == 0){
-		    createAndSendTcpPacket((*it));
-		    (*it).sent = 1;
-		}
-		++it;counter++;
-	    }
+	    ++it;counter++;
 	}
+	
+	//If the buff opened up, free it.
+	if(cbuf.size() < cbuf.capacity() && buff_full == true){
+	    tcpd_packet packet_tcpd;
+	    memset(&packet_tcpd, 0, sizeof(tcpd_packet));
+	    memcpy(&packet_tcpd, &packet_tcpd_full, sizeof(packet_tcpd));
+
+	    packet_tcpd.acked = 0;
+	    packet_tcpd.sent = 0;
+	    packet_tcpd.sequence = sequence++;
+	    cbuf.push_back(packet_tcpd);
+	    buff_full = false;
+		
+	    //Tell SEND it was succefull.
+	    tcpd_packet packet_tcpd_send; //Messages within TCPD
+	    memset(&packet_tcpd_send, 0, sizeof(tcpd_packet));
+	    packet_tcpd_send.sent = 1;
+	    if(sendto(sock, (char *)&packet_tcpd_send, sizeof(tcpd_packet), 0, (struct sockaddr *)&sock_from_full, sizeof sock_from_full) < 0)
+		err("Error sending SEQ to Timer");
+	}
+
+	if(fin_timeout >1)break;
     }
+    
     close(sock);
+    printf("=========================================\n");
+    printf("   TCPDC Connection closed succesfully\n");
+    printf("=========================================\n");
 }
 
 void startTimer(uint32_t sequence, unsigned int timeout){
@@ -253,7 +338,6 @@ void ackTimer(uint32_t sequence){
 	err("Error sending ACK to Timer for SEQ=%d");
     debugf("Sent ACK of %d to timer", packet_timer.sequence);
 }
-
 void createAndSendTcpPacket(tcpd_packet packet_tcpd){
     
     tcp_packet packet_tcp;
@@ -279,7 +363,7 @@ void createAndSendTcpPacket(tcpd_packet packet_tcpd){
     memcpy(&msg.msg_header, &packet_tcpd.sock_dest, sizeof(sockaddr_in));
     memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
 
-    startTimer(packet_tcp.sequence, 5000);
+    startTimer(packet_tcp.sequence, rto);
     
     if(sendto(sock, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_troll, sizeof sock_troll) < 0)
 	err("Error sending to Troll seq=%d", packet_tcp.sequence);
@@ -287,4 +371,51 @@ void createAndSendTcpPacket(tcpd_packet packet_tcpd){
     debugf("SENT seq=%d, port=%d", packet_tcp.sequence, packet_tcp.destination_port);
 
     packet_tcpd.sent = 1;
+}
+void createAndSendTcpFinPacket(unsigned int seq, sockaddr_in destination){
+    
+    tcp_packet packet_tcp;
+    
+    //Compile the data into a tcp packet
+    memset(&packet_tcp, 0, sizeof(tcp_packet));
+    packet_tcp.sequence = seq;
+    packet_tcp.FIN = 1;
+
+    //Calculate CRC and place it into the packet
+    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
+	
+    //Ready it for the troll
+    NetMessage msg;
+    memset(&msg, 0, sizeof(NetMessage));
+    memcpy(&msg.msg_header, &destination, sizeof(sockaddr_in));
+    memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
+    
+    if(sendto(sock, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_troll, sizeof sock_troll) < 0)
+	err("Error sending to Troll seq=%d", packet_tcp.sequence);
+
+    startTimer(packet_tcp.sequence, rto);
+}
+
+void createAndSendTcpAckPacket(unsigned int ack, sockaddr_in destination){
+    
+    tcp_packet packet_tcp;
+    
+    //Compile the data into a tcp packet
+    memset(&packet_tcp, 0, sizeof(tcp_packet));
+    packet_tcp.ack = ack;
+    packet_tcp.ACK = 1;
+
+    //Calculate CRC and place it into the packet
+    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
+	
+    //Ready it for the troll
+    NetMessage msg;
+    memset(&msg, 0, sizeof(NetMessage));
+    memcpy(&msg.msg_header, &destination, sizeof(sockaddr_in));
+    memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
+    
+    if(sendto(sock, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_troll, sizeof sock_troll) < 0)
+	err("Error sending to Troll seq=%d", packet_tcp.ack);
+
+    debugf("SENT ACK=%d, port=%d", ack, destination.sin_port);
 }

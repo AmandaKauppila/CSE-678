@@ -27,7 +27,7 @@ typedef struct{
     unsigned long delta; //ms
     int sequence;
     unsigned long timeout; //ms
-    unsigned long timeout_time; //ms
+    unsigned long time; //ms
     unsigned short port;
 } Node;
 
@@ -120,7 +120,7 @@ int main(){
 		memset(&tmp, 0, sizeof(Node));
 		tmp.sequence = packet.sequence;
 		tmp.timeout = packet.timeout;
-		tmp.timeout_time = gettimeofday_ms() + tmp.timeout;
+		tmp.time = gettimeofday_ms();
 		tmp.port = sock_from.sin_port;
 		addNode(tmp);
 		
@@ -139,11 +139,11 @@ int main(){
 	    it=dlist.begin();
 	    it_node = (Node)*it;
 	    //get the time
-	    time_delta = gettimeofday_ms() - (it_node.timeout_time - it_node.timeout);
+	    time_delta = gettimeofday_ms() - it_node.time;
 	    time_diff = it_node.delta - time_delta;
 	    //debugf("Checking time_diff=%d", time_diff);
 	    while(time_diff <= 0){
-		usleep(1 * 1000);//Prevents buffer overflow.
+		usleep(10 * 1000);//Prevents buffer overflow.
 		//ready and send the tcpd packet
 		debugf("TIMEOUT seq=%d port=%d", it_node.sequence, it_node.port);
 		tcpd_packet packet_tcpd;
@@ -176,14 +176,11 @@ int removeNode(int seq, short port){
     for (it=dlist.begin() ; it != dlist.end(); it++ ){
 	if((*it).sequence == seq && (*it).port == port){
 	    unsigned long tmp_delta = (*it).delta;
-	    it++;
+	    it = dlist.erase(it);
 	    if(it != dlist.end()){
-		debugf("Ading delta of %d to seq=%d to=%d##################", tmp_delta, (*it).sequence, (*it).timeout_time);
+		//debugf("Ading delta of %d to seq=%d to=%d##################", tmp_delta, (*it).sequence, (*it).timeout_time);
 		(*it).delta = (*it).delta + tmp_delta;
-		(*it).timeout_time = (*it).timeout_time + tmp_delta;
 	    }
-	    it--;
-	    dlist.erase(it);
 	    break;
 	}
     }
@@ -196,10 +193,9 @@ void addNode(Node node){
     for(it=dlist.end() ; it != dlist.begin(); it--){
 	--it;
 	it_node = (Node)*it;
-	if(node.timeout_time >= it_node.timeout_time){
+	if(node.time+node.timeout >= it_node.time+it_node.timeout){
 	    //Calculate the time from n-1 to n
-	    node.delta = node.timeout_time - it_node.timeout_time;
-	    
+	    node.delta = (node.time+node.timeout) - (it_node.time+it_node.timeout);
 	    ++it;
 	    dlist.insert(it, node);
 	    break;
@@ -212,5 +208,5 @@ void addNode(Node node){
 	node.delta = node.timeout;
 	dlist.push_front(node);
     }
-    debugf("ADDED seq=%d port=%d delta=%d timeout=%d timeout_time=%d", node.sequence, node.port, node.delta, node.timeout, node.timeout_time);
+    debugf("ADDED seq=%d port=%d delta=%d timeout=%d time=%d", node.sequence, node.port, node.delta, node.timeout, node.time);
 }

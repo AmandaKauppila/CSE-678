@@ -104,6 +104,6 @@ int main(int argc, char* argv[]){
 
     printf("File transfer complete. File saved to:\n  %s", file_name);
     fclose(file);
-    close(sock);
+    CLOSE(sock);
     
 }

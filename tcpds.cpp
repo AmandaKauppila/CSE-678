@@ -1,7 +1,7 @@
 /*
   File Transfer Protocal Daemon - Server Side
   The daemon mimics the TCP functionality of the OS using
-  the UDP protocal available.
+  the UDP protocal avaiable.
   
   Implementation
    1. Opens 2 sockets, one for local communication, other
@@ -51,8 +51,9 @@ void printBuffer(){
 }
 
 
-void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination);
-
+void sendAck(uint32_t ack, sockaddr_in destination);
+void createAndSendTcpFinAckPacket(unsigned int ack, sockaddr_in destination);
+    
 int sock; //socket descriptor for TCPD
 int sock_ext; //socket used for incoming network connections
 struct sockaddr_in sock_tcpds;/* structure for socket name setup */
@@ -64,12 +65,15 @@ socklen_t sock_recv_len;
 socklen_t fromlen;
 struct hostent *recv_host;
 
+unsigned int sequence = 0;
+
 int main(int argc, char* argv[]){
     
     tcpd_packet packet_tcpd;
     tcp_packet packet_tcp;
 
     cbuf_tcp::iterator it = cbuf.begin();
+    bool closing = false;
     
     if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	err("Error openting datagram socket");
@@ -99,6 +103,7 @@ int main(int argc, char* argv[]){
 
     unsigned short curr_port = 0;
     unsigned int low_seq = 0;
+    unsigned int seq_fin = 0;
 
     int total_read = 0;
     unsigned int counter;
@@ -120,7 +125,7 @@ int main(int argc, char* argv[]){
     
     /* bind TCPD Server to Local Port */
     if(bind(sock_ext, (struct sockaddr *)&packet_tcpd.sock_dest, sizeof(sockaddr)) < 0)
-	err("Error binding socket for tcp port=%d",sock_tcp.sin_port);
+	err("Error binding socket for tcp");
     
     debugf("BIND on port=%d", packet_tcpd.sock_dest.sin_port);
     
@@ -148,7 +153,8 @@ int main(int argc, char* argv[]){
 	
 	NetMessage msg;
 	memset(&msg, 0, sizeof(NetMessage));
-	fromlen = sizeof(fromlen);
+	fromlen = sizeof(sock_from);
+	if(closing)break;
 	total_read = recvfrom(sock_ext, &msg, sizeof(NetMessage), 0,(sockaddr *)&sock_from, &fromlen); 
 
 	memset(&packet_tcp, 0, sizeof(tcp_packet));
@@ -164,6 +170,12 @@ int main(int argc, char* argv[]){
 	if(checksum != checksum_in){
 	    printf("CHECKSUM ERROR, seq=%d", packet_tcp.sequence);
 	    continue;
+	}
+
+	if(packet_tcp.FIN == 1){
+	    debugf("FIN Received, CLOSING CONNECTION");
+	    seq_fin = packet_tcp.sequence;
+	    closing = true;
 	}
 
 	//If the buffer is full, drop it.
@@ -216,9 +228,9 @@ int main(int argc, char* argv[]){
 	//Send the ACK 
 	//Always send a packet since were assured this is <= max
 	//sequence for the window
-	sock_tcp.sin_addr.s_addr = sock_from.sin_addr.s_addr;
-	sock_tcp.sin_port = htons(sock_from.sin_port);
-	sendAck(packet_tcp.sequence, packet_tcp.source_port, sock_tcp);
+	memcpy(&sock_tcp, &sock_from, sizeof(sock_from));
+	sock_tcp.sin_port = htons(packet_tcp.source_port);
+	sendAck(packet_tcp.sequence, sock_tcp);
 	
 	//Send all received packets to the recv in the front of the buffer.
 	it = cbuf.begin();
@@ -238,13 +250,23 @@ int main(int argc, char* argv[]){
 		break;
 	    }
 	}
+
+	if(closing && cbuf.size()==0){
+	    memcpy(&sock_tcp, &sock_from, sizeof(sock_from));
+	    sock_tcp.sin_port = htons(packet_tcp.source_port);
+	    createAndSendTcpFinAckPacket(seq_fin + 1, sock_tcp);
+	    break;
+	}
 	
     }
     close(sock);
     close(sock_ext);
+    printf("=========================================\n");
+    printf("   TCPDS Connection closed succesfully\n");
+    printf("=========================================\n");
 }
 
-void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination){
+void sendAck(uint32_t ack, sockaddr_in destination){
     
     usleep(1 * 1000);//prevents UDP bffr overflow
     
@@ -259,16 +281,44 @@ void sendAck(uint32_t ack, unsigned short port, sockaddr_in destination){
     //Calculate CRC and place it into the packet
     packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
     
-    destination.sin_port = htons(port);
+    //Ready it for the troll
+    NetMessage msg;
+    memset(&msg, 0, sizeof(NetMessage));
+    memcpy(&msg.msg_header, &destination, sizeof(destination));
+    memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
+
+    memcpy(&sock_troll, &sock_from, sizeof(sock_from));
+    sock_troll.sin_port = TROLL_PORT;
+    if(sendto(sock_ext, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_troll, sizeof(sock_troll)) < 0)
+	err("Error sending to Troll ack=%d", ack);
+    
+    debugf("SENT ACK==%d, port=%d, troll_port=%d", ack, destination.sin_port, sock_troll.sin_port);
+}
+
+void createAndSendTcpFinAckPacket(unsigned int ack, sockaddr_in destination){
+    usleep(1 * 1000);//prevents UDP bffr overflow
+    
+    //Compile the data into a tcp packet
+    tcp_packet packet_tcp;
+    memset(&packet_tcp, 0, sizeof(tcp_packet));
+
+    //Set some additional TCP fields
+    packet_tcp.sequence = sequence++;
+    packet_tcp.ack = ack;
+    packet_tcp.ACK = 1;
+    packet_tcp.FIN = 1;
+
+    //Calculate CRC and place it into the packet
+    packet_tcp.checksum = crc16((char *)&packet_tcp, sizeof(tcp_packet), 0);
     
     //Ready it for the troll
     NetMessage msg;
     memset(&msg, 0, sizeof(NetMessage));
-    memcpy(&msg.msg_header, &destination, sizeof(sockaddr_in));
+    memcpy(&msg.msg_header, &destination, sizeof(destination));
     memcpy(&msg.msg_contents, &packet_tcp, sizeof(tcp_packet));
-    
-    if(sendto(sock_ext, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_from, fromlen) < 0)
+
+    memcpy(&sock_troll, &sock_from, sizeof(sock_from));
+    sock_troll.sin_port = TROLL_PORT;
+    if(sendto(sock_ext, (char *)&msg, sizeof(NetMessage), 0, (struct sockaddr *)&sock_troll, sizeof(sock_troll)) < 0)
 	err("Error sending to Troll ack=%d", ack);
-    
-    debugf("SENT ACK==%d, port=%d", ack, port);
 }
