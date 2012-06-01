@@ -26,13 +26,17 @@
 #define TCP_H_GUARD
 
 // Defines --------------------------------------------
+//Common ports used for various processes
 #define TCPD_CLIENT_PORT 8010
 #define TCPD_SERVER_PORT 8011
 #define TCPD_RECV_PORT 8012
-
 #define TIMER_PORT 8013
 #define TROLL_PORT 9000
+
+//Used for FTP application
 #define MAX_DATA_SIZE 1000
+
+//Timer and window defaults
 #define DEFAULT_TIMEOUT 1000
 #define MAXRTO 1500
 #define WINDOW_SIZE 20
@@ -60,6 +64,14 @@ typedef struct tcpd_packet {
     unsigned long timestamp;
 };
 
+
+/*
+ * Timer Packet is what the timer expects to receive.
+ * If the ACK flag is set to 1, it indicates a timer
+ * should be removed. If SEQ is set to 1 it indicates
+ * a timer should be added. The timeout is the RTO
+ * provided by the TCPDC.
+ */
 typedef struct timer_packet {
     unsigned ACK : 1;
     unsigned SEQ : 1;
