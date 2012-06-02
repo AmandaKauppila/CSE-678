@@ -156,8 +156,6 @@ size_t SEND(int sockfd, void *buf, size_t len, int flags){
     /* Send to the tcpd_c */
     int result = sendto(sockTmp, &packet, sizeof(tcpd_packet), flags, (struct sockaddr *)&sock_tcpd, sizeof(sock_tcpd));
 
-    //TODO change it so the function waits for a confirmation that the
-    //buffer is not full and that it can continue
     tcpd_packet packet_in;
     if(recv(sockTmp, (char *)&packet_in, sizeof(tcpd_packet), 0) < 0)
 	err("Failed to recv from TCPDC");
